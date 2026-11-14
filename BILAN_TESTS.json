@@ -1,0 +1,29 @@
+{
+  "revision": "2026-11-13-lot-c1-c8-r1-provenance",
+  "reference_anterieure": "2026-11-13-lot-c1-c8",
+  "horodatage_utc": "2026-11-13T18:34:49.938702+00:00",
+  "environnement_test": {
+    "python": "3.13.5",
+    "systeme": "Linux"
+  },
+  "tests_effectivement_executes": {
+    "commande": "python consolidation.py --autotest",
+    "code_sortie": 0,
+    "historiques": 40,
+    "separation": 21,
+    "couverture": 25,
+    "lot_c1_c8": 15,
+    "regressions_provenance": 4,
+    "total": 105,
+    "echecs": 0,
+    "sources": "donnees fictives uniquement",
+    "test_charge_hors_suite": "32274 lignes de provenance synthetique, relecture reussie"
+  },
+  "base_zip_sha256": "3fc23974e7ec838316f1c45824f1ffe33f0950b39c3e4438556dfb1df10021d7",
+  "lanceur_et_dependances_inchanges": true,
+  "syntaxe_python_3_10_verifiee": true,
+  "sources_reelles_non_testes": true,
+  "interface_windows_non_testee": true,
+  "cause_reelle_ligne_32275_confirmee": false,
+  "protection_controle_post_sauvegarde_maintenue": true
+}

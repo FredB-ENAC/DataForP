@@ -1,0 +1,7 @@
+Test synthetique complementaire hors suite de 105 tests.
+Feuille PROVENANCE fictive : 32 274 lignes de donnees (ligne Excel finale 32 275).
+Ligne 32 275 : valeur precise a 17 chiffres et identifiant a 20 chiffres.
+Verificateur original de controle des valeurs apres sauvegarde conserve.
+Resultat effectivement observe : verification de 32 274 lignes reussie, 0 exception.
+Le test de charge ne contient aucune donnee reelle.
+Ce succes ne prouve pas la cause de la vraie erreur a la ligne 32 275.

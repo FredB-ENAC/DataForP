@@ -1,0 +1,34 @@
+{
+  "revision": "2026-11-13-lot-c1-c8",
+  "base_revision": "2026-11-13-controle-couverture",
+  "date_creation_utc": "2026-11-13T18:19:31+00:00",
+  "type": "application_existante_complete",
+  "manifeste_base_sha256": "82958c146bee84c2b3a076255d9e1c1ebb40eeee44b1f14a88048e32dd517fc5",
+  "launcher_unchanged": true,
+  "requirements_unchanged": true,
+  "validation": {
+    "commande": "python consolidation.py --autotest",
+    "resultat": "101/101 sur donnees fictives",
+    "windows_non_teste": true,
+    "sources_reelles_non_testees": true
+  },
+  "sha256": {
+    "consolidation.py": "c35232ef37ced9964368fbcaa30ecb219d1de50bce9c893ea39b4e7ae4bb35a1",
+    "couverture.py": "8986e9a6d821c1bd280dedab37d73253c7e52f6faca11636141b0dc93a5cab46",
+    "test_consolidation.py": "d50f72e0282dd955c50a45f78ba93a46014e9db1b1cd207b6d06890bacbd4685",
+    "test_separation.py": "b4a920dd9e92d7bc79efefa4fb390cc0e8c8c356ec4adbf1f3aeaa786e5c7024",
+    "test_couverture.py": "43ceb484d25c36ad47d899aac1189b7466552cff89f5527c2c7f2df8e7911c3c",
+    "test_lot_c1_c8.py": "9e93749000821aa0937f82b7a1def818f2db29bb690ac20ee176b0a7c5f210c8",
+    "LANCER_WINDOWS.bat": "ba2561c86c9e5724d9b4e9b1d02f334d5dba00e78298b6fc104875f27ee941a9",
+    "requirements.txt": "03a53fc2d9e1ff59642c860c6ced142ed191ad088b82f190d2d4502641d16f33",
+    "LIRE_MOI.txt": "4e7260013f33384130e1a7f543ea96c8a50980414238a5cc64bff029841b78d2",
+    "RESULTATS_TESTS.txt": "1f4adb130a0fedfdd74bc6c684ddd936d18b603af929d24bb6bdb2a1212b3414",
+    "BILAN_TESTS.json": "490b31557da3d87e9031ef1399e4001a3d5cfd9ed32774a96860d119c62789c5",
+    "NOTE_LIVRAISON.md": "a94165d124d30a5d92bfc625c37c57884ed4631584af82a04e2d5432efdd61a3",
+    "MODIFICATIONS.diff": "80a76714778dcccd76cdd1c0de9f10d5e38a6c9b82fbe57d895a1d4da908acbf",
+    "MODIFICATIONS_C1_C8.diff": "c5f7e69e7766c78deca5220e7c035317c102fd6b08c1d71f1ae41fcc753edc47",
+    "MATRICE_RECEPTION_C1_C8.csv": "1907adc0426e225675cd6487abeff0d3dec138a4ab07e84903f2ce07ef15cdba",
+    "MANIFESTE_BASE.json": "82958c146bee84c2b3a076255d9e1c1ebb40eeee44b1f14a88048e32dd517fc5",
+    "SPECIFICATION_C1_C8.pdf": "ad94f0b4a0a0087563a1857e635ef98cc9a0509a45828ee362374de0b54a7c2f"
+  }
+}

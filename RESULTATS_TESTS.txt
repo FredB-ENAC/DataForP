@@ -1,0 +1,121 @@
+test_01_go_details_mixtes (test_separation.Separation.test_01_go_details_mixtes) ... ok
+test_02_nogo_non_remplace (test_separation.Separation.test_02_nogo_non_remplace) ... ok
+test_03_syntheses_contradictoires (test_separation.Separation.test_03_syntheses_contradictoires) ... ok
+test_04_synthese_absente (test_separation.Separation.test_04_synthese_absente) ... ok
+test_05_resultat_global_vide (test_separation.Separation.test_05_resultat_global_vide) ... ok
+test_06_resultat_autre_conserve (test_separation.Separation.test_06_resultat_autre_conserve) ... ok
+test_07_role_pl_distinct_global_et_detail (test_separation.Separation.test_07_role_pl_distinct_global_et_detail) ... ok
+test_08_repetitions_provenance_complete (test_separation.Separation.test_08_repetitions_provenance_complete) ... ok
+test_09_passages_identiques_non_fusionnes (test_separation.Separation.test_09_passages_identiques_non_fusionnes) ... ok
+test_10_tous_candidats_et_reperes (test_separation.Separation.test_10_tous_candidats_et_reperes) ... ok
+test_11_rattachement_incertain (test_separation.Separation.test_11_rattachement_incertain) ... ok
+test_12_pas_synthese_artificielle (test_separation.Separation.test_12_pas_synthese_artificielle) ... ok
+test_13_relance_enrichissement (test_separation.Separation.test_13_relance_enrichissement) ... ok
+test_14_detail_seul_pas_nouveau_dossier (test_separation.Separation.test_14_detail_seul_pas_nouveau_dossier) ... ok
+test_15_alias_et_filtre_preserves (test_separation.Separation.test_15_alias_et_filtre_preserves) ... ok
+test_16_sans_eleveid (test_separation.Separation.test_16_sans_eleveid) ... ok
+test_17_integrite_trace_detectee (test_separation.Separation.test_17_integrite_trace_detectee) ... ok
+test_18_registre_ancien_mis_ecart_sans_renumerotation (test_separation.Separation.test_18_registre_ancien_mis_ecart_sans_renumerotation) ... ok
+test_19_alias_restitues (test_separation.Separation.test_19_alias_restitues) ... ok
+test_20_cas_stable_apres_enrichissement (test_separation.Separation.test_20_cas_stable_apres_enrichissement) ... ok
+test_21_contradiction_meme_observation_detail (test_separation.Separation.test_21_contradiction_meme_observation_detail) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 3.749s
+
+OK
+test_01_reference_complete_et_sources_absentes_explicites (test_couverture.Couverture.test_01_reference_complete_et_sources_absentes_explicites) ... ok
+test_02_ligne_oubliee_par_lecteur_detectee (test_couverture.Couverture.test_02_ligne_oubliee_par_lecteur_detectee) ... ok
+test_03_feuille_utile_inconnue_interdit_certification (test_couverture.Couverture.test_03_feuille_utile_inconnue_interdit_certification) ... ok
+test_04_feuilles_vides_techniques_entetes (test_couverture.Couverture.test_04_feuilles_vides_techniques_entetes) ... ok
+test_05_champ_nouveau_conserve_et_signale (test_couverture.Couverture.test_05_champ_nouveau_conserve_et_signale) ... ok
+test_06_champ_entierement_vide_inventorie (test_couverture.Couverture.test_06_champ_entierement_vide_inventorie) ... ok
+test_07_note_invalide_conservee (test_couverture.Couverture.test_07_note_invalide_conservee) ... ok
+test_08_formule_sans_cache_preservee_sans_recalcul (test_couverture.Couverture.test_08_formule_sans_cache_preservee_sans_recalcul) ... ok
+test_09_resultat_pl_oublie_par_lecteur_detecte (test_couverture.Couverture.test_09_resultat_pl_oublie_par_lecteur_detecte) ... ok
+test_10_degree_role_inconnus_signales (test_couverture.Couverture.test_10_degree_role_inconnus_signales) ... ok
+test_11_attente_conservee_sans_fausse_perte (test_couverture.Couverture.test_11_attente_conservee_sans_fausse_perte) ... ok
+test_12_repetitions_non_fusionnees (test_couverture.Couverture.test_12_repetitions_non_fusionnees) ... ok
+test_13_json_long_decoupe_et_reconstructible (test_couverture.Couverture.test_13_json_long_decoupe_et_reconstructible) ... ok
+test_14_alteration_archive_detectee (test_couverture.Couverture.test_14_alteration_archive_detectee) ... ok
+test_15_sessions_dates_et_nogo_controles (test_couverture.Couverture.test_15_sessions_dates_et_nogo_controles) ... ok
+test_16_date_illisible_conservee (test_couverture.Couverture.test_16_date_illisible_conservee) ... ok
+test_17_chronologie_klif_et_exclusions (test_couverture.Couverture.test_17_chronologie_klif_et_exclusions) ... ok
+test_18_filtre_avant_12a_limite_a_klif_par_c2 (test_couverture.Couverture.test_18_filtre_avant_12a_limite_a_klif_par_c2) ... ok
+test_19_bilan_partageable_sans_donnees_individuelles (test_couverture.Couverture.test_19_bilan_partageable_sans_donnees_individuelles) ... ok
+test_20_population_recente_monosource_et_reexecution (test_couverture.Couverture.test_20_population_recente_monosource_et_reexecution) ... ok
+test_21_notes_role_non_interpretable_signale (test_couverture.Couverture.test_21_notes_role_non_interpretable_signale) ... ok
+test_22_astral_compteur_controle_independamment (test_couverture.Couverture.test_22_astral_compteur_controle_independamment) ... ok
+test_23_klif_valeur_source_oubliee_detectee (test_couverture.Couverture.test_23_klif_valeur_source_oubliee_detectee) ... ok
+test_24_reef_omission_de_champ_detectee_independamment (test_couverture.Couverture.test_24_reef_omission_de_champ_detectee_independamment) ... ok
+test_25_promotion_inconnue_non_divulguee_dans_bilan (test_couverture.Couverture.test_25_promotion_inconnue_non_divulguee_dans_bilan) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 4.263s
+
+OK
+test_c1_feuilles_ignorees_et_inconnue (test_lot_c1_c8.LotC1C8.test_c1_feuilles_ignorees_et_inconnue) ... ok
+test_c2_archive_ancienne_conservee (test_lot_c1_c8.LotC1C8.test_c2_archive_ancienne_conservee) ... ok
+test_c2_promotions_p_toutes_annees_et_avant12a_hors_klif (test_lot_c1_c8.LotC1C8.test_c2_promotions_p_toutes_annees_et_avant12a_hors_klif) ... ok
+test_c3_moyenne_toute_colonne_dernier_eleve_et_conflit (test_lot_c1_c8.LotC1C8.test_c3_moyenne_toute_colonne_dernier_eleve_et_conflit) ... ok
+test_c4_absente_ou_dupliquee_sans_repli (test_lot_c1_c8.LotC1C8.test_c4_absente_ou_dupliquee_sans_repli) ... ok
+test_c4_deux_dossiers_18a_trente_observations (test_lot_c1_c8.LotC1C8.test_c4_deux_dossiers_18a_trente_observations) ... ok
+test_c5_astral_abes_enac_pourcentage_et_total (test_lot_c1_c8.LotC1C8.test_c5_astral_abes_enac_pourcentage_et_total) ... ok
+test_c5_reprise_astral_periodes_distinctes (test_lot_c1_c8.LotC1C8.test_c5_reprise_astral_periodes_distinctes) ... ok
+test_c6_klif_origine_duree_source_et_identifiants_ignores (test_lot_c1_c8.LotC1C8.test_c6_klif_origine_duree_source_et_identifiants_ignores) ... ok
+test_c6_origines_de_tous_types_et_mois_virgule (test_lot_c1_c8.LotC1C8.test_c6_origines_de_tous_types_et_mois_virgule) ... ok
+test_c7_note_nogo_reconstituee_et_position2_neutralisee (test_lot_c1_c8.LotC1C8.test_c7_note_nogo_reconstituee_et_position2_neutralisee) ... ok
+test_c7_valeur_invalide_conflits_et_role_inconnu (test_lot_c1_c8.LotC1C8.test_c7_valeur_invalide_conflits_et_role_inconnu) ... ok
+test_c7_vingt_sept_observations_fictives_conservees (test_lot_c1_c8.LotC1C8.test_c7_vingt_sept_observations_fictives_conservees) ... ok
+test_c8_omission_simulee_detectee (test_lot_c1_c8.LotC1C8.test_c8_omission_simulee_detectee) ... ok
+test_c8_origine_trace_detail_et_rattachement_indecis (test_lot_c1_c8.LotC1C8.test_c8_origine_trace_detail_et_rattachement_indecis) ... ok
+test_regression_provenance_date_et_duree_ordinaires (test_lot_c1_c8.LotC1C8.test_regression_provenance_date_et_duree_ordinaires) ... ok
+test_regression_provenance_modification_reelle_detectee (test_lot_c1_c8.LotC1C8.test_regression_provenance_modification_reelle_detectee) ... ok
+test_regression_provenance_nombres_precis_et_identifiants_longs (test_lot_c1_c8.LotC1C8.test_regression_provenance_nombres_precis_et_identifiants_longs) ... ok
+test_regression_provenance_texte_trop_long_non_tronque (test_lot_c1_c8.LotC1C8.test_regression_provenance_texte_trop_long_non_tronque) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 3.791s
+
+OK
+OK  sources inchangees (REEF_rebuild compris)
+OK  nouveau fichier distinct de REEF_rebuild
+OK  toutes les colonnes REEF_rebuild conservees dans le meme ordre
+OK  8 lignes REEF conservees, population ouverte maintenue
+OK  fichier enregistre relu et toutes les cellules comparees
+OK  les quatre sources ont des cellules reellement enregistrees
+OK  premiere cellule remplie de chaque source verifiable par adresse
+OK  aucune decision annoncee comme lue ou appliquee au premier lancement
+OK  decision et commentaire REEF conserves
+OK  colonnes complementaires placees apres le Degree
+OK  Parcours BTWR rattache a la periode 1 (20A)
+OK  concordance avec la note REEF
+OK  Parcours APS1 rattache a la reprise (20C) et pas a 20A
+OK  note Parcours APS1 par role AP
+OK  Notes Socrates rattachees (MCTA20C -> 20C)
+OK  Sessions : nombre, NOGO, dates
+OK  ASTRAL : remedials APS1 de la periode
+OK  deux passages ADI differents non fusionnes
+OK  homonymes meme promotion : aucune valeur, a examiner
+OK  periode ambigue (meme promotion repetee) non choisie
+OK  eleve hors REEF integre selon population ouverte
+OK  KLIF : feuille 11A ignoree
+OK  KLIF une seule fois, sur la derniere periode
+OK  KLIF dossier D1 : premiere affectation en echec
+OK  KLIF second centre et duree
+OK  KLIF entree ENAC -> MU finale
+OK  KLIF D2 qualifiee en 12 mois
+OK  variante de nom (GARCIA / GARCIA LOPEZ) proposee, non utilisee
+OK  fichier de decisions cree
+OK  propositions pour KLIF et Notes
+OK  decision OUI appliquee a la relance (KLIF)
+OK  decision OUI appliquee a la relance (Notes)
+OK  decisions lues distinguees des decisions effectivement retrouvees
+OK  promotion differente non affectee meme si le dossier a une seule periode
+OK  divergence entre calcul et fichier enregistre detectee
+OK  donnee ajoutee a la source integree
+OK  decisions conservees apres relance
+OK  fichier precedent conserve
+OK  bilan partageable sans nom
+OK  REEF_rebuild toujours inchange
+40 tests reussis, 0 echecs

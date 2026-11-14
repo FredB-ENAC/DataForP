@@ -1,0 +1,9 @@
+﻿Critere;Exigence;Test_executable;Statut;Reserve
+C1;"Exclure quatre feuilles auxiliaires; cinquieme inconnue signalee";test_c1_feuilles_ignorees_et_inconnue;REUSSI_FICTIF;"Conforme au contrat de couverture; aucune feuille reelle lue"
+C2;"P hors KLIF Notes Sessions; filtre avant12A KLIF seulement; archive stable";test_c2_promotions_p_toutes_annees_et_avant12a_hors_klif / test_c2_archive_ancienne_conservee;REUSSI_FICTIF;"Test couverture 18 adapte a C2; anciens registres reels non testes"
+C3;"Moyenne toute colonne; conflit identite; dernier eleve reel";test_c3_moyenne_toute_colonne_dernier_eleve_et_conflit;REUSSI_FICTIF;Nombre de moyennes reelles non mesure
+C4;"Deux dossiers 18A: 6 syntheses et 24 details; sans repli";test_c4_deux_dossiers_18a_trente_observations / test_c4_absente_ou_dupliquee_sans_repli;REUSSI_FICTIF;Test 20 observations periode1 et 10 periode2, sur exemples fictifs
+C5;Remedial explicite, ABES_ et TOTAL exclus, reprises separees;test_c5_astral_abes_enac_pourcentage_et_total / test_c5_reprise_astral_periodes_distinctes;REUSSI_FICTIF;Rattachements ASTRAL reels a controler
+C6;"Origine brute; mois ENAC exclus sans substitution; identifiants ignores";test_c6_klif_origine_duree_source_et_identifiants_ignores / test_c6_origines_de_tous_types_et_mois_virgule;REUSSI_FICTIF;Sens et plausibilite des durees reelles a qualifier
+C7;"Note reconstituee fournie; NOGO inchange; 2 neutralise; contradictions";test_c7_note_nogo_reconstituee_et_position2_neutralisee / test_c7_valeur_invalide_conflits_et_role_inconnu / test_c7_vingt_sept_observations_fictives_conservees;REUSSI_FICTIF;"27 observations fictives testees; pas les 27 observations reelles"
+C8;"Syntheses / details audit; omission detectee";test_c8_origine_trace_detail_et_rattachement_indecis / test_c8_omission_simulee_detectee;REUSSI_FICTIF;Bilan reel et conservation effective restent a confirmer sur PC

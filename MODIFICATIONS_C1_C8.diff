@@ -1,0 +1,995 @@
+--- reference/consolidation.py
++++ C1_C8/consolidation.py
+@@ -16,13 +16,19 @@
+ from pathlib import Path
+ 
+ VERSION = "1.0"
+-REVISION = "2026-11-13-controle-couverture"
++REVISION = "2026-11-13-lot-c1-c8"
+ DEGREES = ("BTWR", "BSURV", "ADI", "APS1", "APS2", "ACS1", "ACS2")
+ ROLES = {"BTWR": ("TWR",), "BSURV": ("CO", "CR"), "ADI": ("LOC",), "APS1": ("PL", "AP"),
+          "APS2": ("PL", "AP"), "ACS1": ("CO", "CR"), "ACS2": ("CO", "CR")}
+ PROMO_MIN_KLIF = (2012, "A")          # feuilles KLIF anterieures a 12A : non etudiees
+ REEF_REQUIS = ("ID_DOSSIER_LOCAL", "NOM", "PRENOM", "ORDRE_PERIODE", "PROMOTION")
+ DECISIONS_NOM = "DECISIONS_CORRESPONDANCES.xlsx"
++FEUILLES_IGNOREES = {
++    "REEF": frozenset(("REPRISES_A_PRECISER", "LIRE_MOI", "_META_LOCAL")),
++    "NOTES": frozenset(("AUDIT_DEGREES",)),
++}
++DOSSIERS_18A_C4 = frozenset(("Dd43dd2048f958378", "D4d8e8aa756149655"))
++FAMILLES_HORS_CIBLE = frozenset(("ICNA_P", "TSEEAC", "DEF", "EXPORT"))
+ 
+ 
+ class Erreur(Exception):
+@@ -118,6 +124,23 @@
+     return {"BASICTOWER": "BTWR", "BASICACC": "BSURV"}.get(norm(m.group(1)).upper(), m.group(1))
+ 
+ 
++def degree_entete_astral(valeur):
++    """Seuls les en-tetes Degree exacts comptent ; ABES_ADI n'est pas ADI."""
++    t = propre(valeur).upper().replace(" ", "")
++    if t.startswith("ABES_"):
++        return None
++    return {"BASIC_TOWER": "BTWR", "BASIC_ACC": "BSURV"}.get(t, t if t in DEGREES else None)
++
++
++def famille_explicitement_exclue(brut):
++    return promo(brut)[0] in FAMILLES_HORS_CIBLE
++
++
++def est_moyenne_klif(valeur):
++    """C3 : egalite stricte apres normalisation de la casse et des espaces seulement."""
++    return isinstance(valeur, str) and "".join(valeur.split()).casefold() == "moyenne"
++
++
+ def role_de(degree, brut):
+     s = norm(brut)
+     table = {"co": "CO", "pc": "CO", "organique": "CO", "cr": "CR", "rc": "CR", "radariste": "CR",
+@@ -199,7 +222,11 @@
+ def lire_reef(chemin):
+     wb = charger(chemin)
+     try:
+-        ws = next((w for w in wb.worksheets if norm(w.title) == "reefrebuild"), wb.worksheets[0])
++        autorisees = [w for w in wb.worksheets if w.title.upper() not in FEUILLES_IGNOREES["REEF"]]
++        ws = next((w for w in autorisees if norm(w.title) == "reefrebuild"),
++                  autorisees[0] if autorisees else None)
++        if ws is None:
++            raise Erreur("REEF_REBUILD : aucune feuille de donnees hors feuilles ignorees.")
+         it = ws.iter_rows(values_only=True)
+         entetes = [propre(h) for h in next(it, ())]
+         while entetes and not entetes[-1]:
+@@ -247,7 +274,10 @@
+              "noteposition1": "note1", "note1": "note1", "resultat1": "res1", "rattrapage1": "ratt1",
+              "position2": "role2", "role2": "role2", "noteposition2": "note2", "note2": "note2",
+              "resultat2": "res2", "rattrapage2": "ratt2", "note": "note", "noteglobale": "note",
+-             "resultat": "res", "resultatglobal": "res"}
++              "resultat": "res", "resultatglobal": "res",
++              "notereconstituee": "note_reconst", "originenotereconstituee": "origine_reconst",
++              "statutnotereconstituee": "statut_reconst", "traitementposition2": "traitement2",
++              "position2interpretee": "position2_interpretee"}
+     out = []
+     wb = charger(chemin)
+     try:
+@@ -279,6 +309,10 @@
+                     lecture["PARCOURS"]["alias_" + ("BASIC_TOWER" if d == "BTWR" else "BASIC_ACC") + "_vers_" + d] += 1
+                 roles = {}
+                 for i in ("1", "2"):
++                    traitement = norm(g("traitement2")) + " " + norm(g("position2_interpretee")) if i == "2" else ""
++                    if i == "2" and any(m in traitement for m in ("neutralis", "ignore", "nonretenu")):
++                        lecture["PARCOURS"]["position_2_neutralisee_explicitement"] += 1
++                        continue  # la ligne source et son traitement restent dans observation_brute
+                     r = role_de(d, g("role" + i)) if d else None
+                     if d in ("BTWR", "ADI") and r is None and not vide(g("note" + i)) and i == "1":
+                         r = ROLES[d][0]
+@@ -290,6 +324,12 @@
+                 out.append(obs("PARCOURS", chemin, ws.title, no, "%s %s" % (propre(g("nom")), propre(g("prenom"))),
+                                cle_nom(g("nom"), g("prenom")), g("promo"), d,
+                                note=note(g("note")), res=resultat(g("res")) or propre(g("res")) or None, roles=roles,
++                               note_reconstituee=(note(g("note_reconst")) if norm(g("note")) == "nogo" else None),
++                               note_reconstituee_brute=propre(g("note_reconst")),
++                               origine_note_reconstituee=propre(g("origine_reconst")),
++                               statut_note_reconstituee=propre(g("statut_reconst")),
++                               position_2_neutralisee=any(m in (norm(g("traitement2")) + " " + norm(g("position2_interpretee")))
++                                                         for m in ("neutralis", "ignore", "nonretenu")),
+                                degree_brut=propre(g("degree")), identite_nom=propre(g("nom")),
+                                identite_prenom=propre(g("prenom")), niveau=niveau,
+                                observation_brute={propre(k): row[j] if j < len(row) else None
+@@ -305,6 +345,9 @@
+     wb = charger(chemin)
+     try:
+         for ws in wb.worksheets:
++            if ws.title.upper() in FEUILLES_IGNOREES.get(source, ()):
++                lecture[source]["feuilles_ignorees_par_decision"] += 1
++                continue
+             courant, n = None, 0
+             for i, row in enumerate(ws.iter_rows(min_col=1, max_col=max_col, values_only=True), 1):
+                 row = tuple(row) + (None,) * (max_col - len(row))
+@@ -313,6 +356,10 @@
+                     continue
+                 b = propre(row[1])
+                 if b.casefold().startswith("class:"):
++                    if source in ("NOTES", "SESSIONS") and famille_explicitement_exclue(b[6:].strip()):
++                        courant = None
++                        lecture[source]["blocs_hors_perimetre_exclus"] += 1
++                        continue
+                     courant = {"feuille": ws.title, "ligne": i, "row": row, "classe": b[6:].strip(),
+                                "degree": None, "sims": []}
+                     blocs.append(courant)
+@@ -374,8 +421,8 @@
+             rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+             h, col = None, {}
+             for i, r in enumerate(rows[:15]):
+-                noms = [{"BASIC_TOWER": "BTWR", "BASIC_ACC": "BSURV"}.get(propre(c).upper(), propre(c).upper()) for c in r]
+-                if sum(1 for x in noms if x in DEGREES) >= 3:
++                noms = [degree_entete_astral(c) for c in r]
++                if any(noms):
+                     h, col = i, {x: j for j, x in enumerate(noms) if x in DEGREES}
+                     break
+             if h is None:
+@@ -386,26 +433,37 @@
+ 
+             def cell(r, m):
+                 return propre(r[col[m]]) if col[m] < len(r) else ""
++
++            def terminer():
++                if courant is not None:
++                    if courant["data"]["remedials"]:
++                        out.append(courant)
++                    else:
++                        lecture["ASTRAL"]["blocs_sans_remedial_explicite"] += 1
++
+             for i in range(h + 1, len(rows)):
+                 r = rows[i]
+                 label = propre(r[1]) if len(r) > 1 else ""
+                 if label.upper() == "TOTAL":
++                    terminer()
++                    courant = None
+                     break
+                 etiquette = bool(re.match(r"^(ENAC|ENAC\s*/.*|[A-Za-z]{2,12}\s*/\s*[A-Za-z0-9]{2,8})$", label, re.I))
+                 donnees = {m: cell(r, m) for m in col if cell(r, m)}
+-                if label and not etiquette and any(RE_PCT.match(v) or RE_REM.match(v) for v in donnees.values()):
++                if label and not etiquette and len(cle_nom(label).split()) >= 2:
++                    terminer()
+                     courant = obs("ASTRAL", chemin, ws.title, i + 1, label, cle_nom(label), ws.title, None,
+                                   remedials=Counter())
+-                    out.append(courant)
++                elif label and not etiquette:
++                    terminer()
++                    courant = None
++                if courant is not None and donnees:
+                     for m, v in donnees.items():
+                         q = RE_REM.match(v)
+                         if q:
+                             courant["data"]["remedials"][m] += int(q.group(1))
+-                elif courant is not None and donnees:
+-                    for m, v in donnees.items():
+-                        q = RE_REM.match(v)
+-                        if q:
+-                            courant["data"]["remedials"][m] += int(q.group(1))
++            else:
++                terminer()
+     finally:
+         wb.close()
+     return out
+@@ -417,7 +475,8 @@
+     "datedaffectation": "date_affectation", "dateobtentiondelamuzz": "date_mu",
+     "arretformation": "arret", "nouveaucentre": "nouveau_centre", "datedarrivee": "date_arrivee",
+     "nombredechecs": "nb_echecs", "datedefindeformation": "date_fin",
+-    "modederecrutement": "recrutement"}
++    "modederecrutement": "recrutement", "origine": "origine",
++    "nombredemoisdequalificationenacexclus": "duree_enac_exclus"}
+ EPISODE_2 = {"date_mu", "arret", "nb_echecs", "date_fin", "date_arrivee"}
+ 
+ 
+@@ -427,6 +486,9 @@
+     try:
+         for ws in wb.worksheets:
+             fam, code = promo(ws.title)
++            if fam == "ICNA_P":
++                lecture["KLIF"]["feuilles_voie_p_exclues"] += 1
++                continue
+             o = ordre_promo(code[:3] if code else None) if fam in ("ICNA_LETTRE", "ICNA_P") else None
+             if o is None:
+                 lecture["KLIF"]["feuilles_non_promotion"] += 1
+@@ -451,16 +513,22 @@
+             for i in range(k + 1, len(rows)):
+                 row = rows[i]
+                 g = lambda r, ep=1: row[carte[(r, ep)]] if (r, ep) in carte and carte[(r, ep)] < len(row) else None
++                moyenne = any(est_moyenne_klif(x) for x in row)
++                if moyenne and vide(g("nom")) and vide(g("prenom")):
++                    lecture["KLIF"]["lignes_moyenne_ignorees"] += 1
++                    continue
+                 if vide(g("nom")) and vide(g("prenom")):
+                     if any(not vide(x) for x in row):
+                         lecture["KLIF"]["lignes_sans_identite"] += 1
+                     continue
+                 v = {"date_entree": g("date_entree"), "affectation": g("affectation"), "zone": g("zone"),
++                     "origine": g("origine"), "duree_enac_exclus_brute": g("duree_enac_exclus"),
+                      "date_affectation": g("date_affectation"), "date_mu_1": g("date_mu"), "arret_1": g("arret"),
+                      "nouveau_centre": g("nouveau_centre"), "date_arrivee_2": g("date_arrivee", 2),
+                      "date_mu_2": g("date_mu", 2), "arret_2": g("arret", 2),
+                      "nb_echecs": g("nb_echecs") if g("nb_echecs") is not None else g("nb_echecs", 2),
+-                     "date_fin": g("date_fin") if g("date_fin") is not None else g("date_fin", 2)}
++                     "date_fin": g("date_fin") if g("date_fin") is not None else g("date_fin", 2),
++                     "conflit_moyenne_identite": moyenne}
+                 out.append(obs("KLIF", chemin, ws.title, i + 1, "%s %s" % (propre(g("nom")), propre(g("prenom"))),
+                                cle_nom(g("nom"), g("prenom")), ws.title, None, identite_nom=propre(g("nom")), identite_prenom=propre(g("prenom")), **v))
+     finally:
+@@ -532,18 +600,30 @@
+         alertes.append("NOUVEAU_CENTRE_APRES_QUALIFICATION")
+     if mu1 is None and not vide(d["date_mu_1"]) and not texte_sortie:
+         alertes.append("DATE_MU_1_ILLISIBLE")
++    duree_brute = d.get("duree_enac_exclus_brute")
++    duree_source = nombre(duree_brute)
++    if not vide(duree_brute):
++        if duree_source is None:
++            alertes.append("DUREE_ENAC_EXCLUS_NON_NUMERIQUE")
++        elif duree_source < 0:
++            alertes.append("DUREE_ENAC_EXCLUS_NEGATIVE")
++            duree_source = None
+     return {"KLIF_MOIS_AFFECTATION_MU_1": m1, "KLIF_ISSUE_AFFECTATION_1": issue,
+             "KLIF_MOIS_ARRIVEE_MU_2": m2, "KLIF_MOIS_ENTREE_ENAC_MU": mt,
++            "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS": duree_source,
+             "KLIF_ARRET_1_CATEGORIE": a1 or "", "KLIF_ARRET_2_CATEGORIE": a2 or ""}, alertes
+ 
+ 
+ KLIF_COLONNES = ["KLIF_PORTEE", "KLIF_LIEN", "KLIF_FEUILLE", "KLIF_DATE_ENTREE_ENAC",
+-                 "KLIF_AFFECTATION_1", "KLIF_ZONE", "KLIF_DATE_AFFECTATION_1", "KLIF_DATE_MU_1",
++                 "KLIF_ORIGINE", "KLIF_AFFECTATION_1", "KLIF_ZONE", "KLIF_DATE_AFFECTATION_1", "KLIF_DATE_MU_1",
+                  "KLIF_ARRET_1", "KLIF_ARRET_1_CATEGORIE", "KLIF_MOIS_AFFECTATION_MU_1",
+                  "KLIF_ISSUE_AFFECTATION_1", "KLIF_NOUVEAU_CENTRE", "KLIF_DATE_ARRIVEE_2", "KLIF_DATE_MU_2",
+                  "KLIF_ARRET_2", "KLIF_ARRET_2_CATEGORIE", "KLIF_MOIS_ARRIVEE_MU_2", "KLIF_NB_ECHECS",
+-                 "KLIF_DATE_FIN_FORMATION", "KLIF_MOIS_ENTREE_ENAC_MU", "KLIF_ALERTES"]
+-KLIF_BRUT = {"KLIF_DATE_ENTREE_ENAC": "date_entree", "KLIF_AFFECTATION_1": "affectation", "KLIF_ZONE": "zone",
++                 "KLIF_DATE_FIN_FORMATION", "KLIF_MOIS_ENTREE_ENAC_MU",
++                 "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS", "KLIF_DUREE_ENAC_EXCLUS_BRUTE", "KLIF_ALERTES"]
++KLIF_BRUT = {"KLIF_DATE_ENTREE_ENAC": "date_entree", "KLIF_ORIGINE": "origine",
++             "KLIF_DUREE_ENAC_EXCLUS_BRUTE": "duree_enac_exclus_brute",
++             "KLIF_AFFECTATION_1": "affectation", "KLIF_ZONE": "zone",
+              "KLIF_DATE_AFFECTATION_1": "date_affectation", "KLIF_DATE_MU_1": "date_mu_1",
+              "KLIF_ARRET_1": "arret_1", "KLIF_NOUVEAU_CENTRE": "nouveau_centre",
+              "KLIF_DATE_ARRIVEE_2": "date_arrivee_2", "KLIF_DATE_MU_2": "date_mu_2", "KLIF_ARRET_2": "arret_2",
+@@ -552,6 +632,8 @@
+ 
+ def colonnes_degree(d):
+     c = [d + "_PARCOURS_RESULTAT", d + "_PARCOURS_NOTE"]
++    c += [d + "_PARCOURS_NOTE_RECONSTITUEE", d + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
++          d + "_PARCOURS_STATUT_NOTE_RECONSTITUEE"]
+     if len(ROLES[d]) > 1:
+         c += ["%s_%s_PARCOURS_NOTE" % (d, r) for r in ROLES[d]]
+     if d in ("APS1", "APS2"):
+@@ -560,7 +642,7 @@
+     if len(ROLES[d]) > 1:
+         c += ["%s_%s_SOCRATES_NOTE" % (d, r) for r in ROLES[d]]
+     c += [d + "_SESSIONS_NB", d + "_SESSIONS_NOGO", d + "_SESSIONS_PREMIERE", d + "_SESSIONS_DERNIERE",
+-          d + "_ASTRAL_REMEDIALS", d + "_ETAT_SOURCES"]
++          d + "_ASTRAL_REMEDIALS", d + "_ASTRAL_PRESENCE_REMEDIAL", d + "_ETAT_SOURCES"]
+     return c
+ 
+ 
+@@ -628,6 +710,8 @@
+         valide, rejets = self._decision(o)
+         if valide:
+             return valide, "DECISION_VALIDEE"
++        if o["famille"] in ("AUTRE", "ABSENTE"):
++            return None, "PROMOTION_A_QUALIFIER"
+         if o.get("_propositions_population"):
+             for did, motif in o["_propositions_population"]:
+                 if did in self.dossiers and did not in rejets:
+@@ -646,7 +730,7 @@
+                 self._proposer(o, cands[0], "NOM_EXACT_PROMOTION_KLIF_DIFFERENTE")
+                 return None, "PROPOSITION_A_DECIDER"
+             return None, "HOMONYMES"
+-        if o["famille"] != "ICNA_LETTRE":
++        if o["famille"] in FAMILLES_HORS_CIBLE:
+             return None, "HORS_CIBLE_CURSUS_OU_VOIE"
+         if o["promo"] not in self.promos_reef:
+             return None, "PROMOTION_NON_REPRESENTEE_DANS_REEF"
+@@ -677,6 +761,16 @@
+ 
+     @staticmethod
+     def periode(d, o):
++        if (d and d.get("id") in DOSSIERS_18A_C4 and o.get("source") == "PARCOURS"
++                and o.get("degree") in ("ACS1", "ACS2")):
++            brut = norm(o["promo_brute"])
++            cible = (1 if brut == "mcta18a" else
++                     2 if brut == "mcta18abis" and o["degree"] == "ACS2" else None)
++            if cible is not None:
++                candidates = [p for p in d["periodes"] if p["ordre"] == cible and p["promo"] == "18A"]
++                if len(candidates) == 1:
++                    return candidates[0], "PERIODE_C4_18A_EXPLICITE"
++                return None, "PERIODE_C4_ABSENTE" if not candidates else "PERIODE_C4_AMBIGUE"
+         ps = [p for p in d["periodes"] if p["promo"] == o["promo"]]
+         if len(ps) == 1:
+             return ps[0], "PERIODE_UNIQUE"
+@@ -710,6 +804,11 @@
+     """Ajouts issus des sources, sans changer une ligne ni une periode REEF."""
+     ids_reef = set(dossiers)
+     cles_reef = {d["cle"] for d in dossiers.values()}
++    archive = registre.get("hors_perimetre_avant_12A", {})
++    anciens = {did: saved.get("cle") for did, saved in {**registre.get("dossiers", {}),
++                **archive.get("dossiers", {})}.items()}
++    deja_ecartes = {(anciens.get(did), pr) for did, ps in archive.get("periodes", {}).items()
++                    for pr in ps}
+     nouveaux = periodes_nouvelles = 0
+     def nouvelle_ligne(d, pr, ordre, origine, nature):
+         v = OrderedDict((c, None) for c in entetes)
+@@ -767,7 +866,8 @@
+     ordre_cles = sorted(par_cle, key=lambda k: (-len({o["source"] for o in par_cle[k]}), -len(k.split()), k))
+     for cle in ordre_cles:
+         for o in par_cle[cle]:
+-            if o["famille"] != "ICNA_LETTRE" or not ordre_promo(o["promo"]) or ordre_promo(o["promo"]) < PROMO_MIN_KLIF:
++            if (o["famille"] != "ICNA_LETTRE" or not ordre_promo(o["promo"])
++                    or (o["cle"], o["promo"]) in deja_ecartes):
+                 continue
+             if len(cle.split()) < 2:
+                 continue
+@@ -841,16 +941,21 @@
+     nb_dossiers_reef, nb_lignes_reef = len(dossiers), len(lignes)
+     retenues = []
+     for o in toutes:
+-        if promotion_avant_12a(o["promo_brute"]):
++        if o["source"] == "KLIF" and promotion_avant_12a(o["promo_brute"]):
+             lecture[o["source"]]["observations_anterieures_12A_ignorees"] += 1
++        elif o["source"] in ("NOTES", "SESSIONS", "KLIF") and famille_explicitement_exclue(o["promo_brute"]):
++            lecture[o["source"]]["observations_hors_cible_ignorees"] += 1
+         else:
+             retenues.append(o)
+     toutes = retenues
+     registre = lire_registre_population(sortie)
+     exclusions = ecarter_anciennes_periodes_registre(registre)
+     population = etendre_population(entetes, lignes, dossiers,
+-                                    [o for o in toutes if o["source"] != "PARCOURS" or
+-                                     o["data"].get("niveau") == "SYNTHESE_PARCOURS"], decisions, registre)
++                                    [o for o in toutes
++                                     if not (o["source"] == "KLIF" and o["data"].get("conflit_moyenne_identite"))
++                                     and (o["source"] != "PARCOURS" or
++                                          o["data"].get("niveau") == "SYNTHESE_PARCOURS")],
++                                    decisions, registre)
+     population.update(exclusions)
+     m = Moteur(dossiers, decisions)
+     journal("Rapprochement des eleves...")
+@@ -874,6 +979,12 @@
+             g["reperes"].append("%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"]))
+ 
+     for o in toutes:
++        if o["source"] == "KLIF" and o["data"].get("conflit_moyenne_identite"):
++            rattachements_couverture[id(o)] = {
++                "dossier": "", "ordre": "", "statut": "KLIF_MOYENNE_AVEC_IDENTITE"}
++            statuts["KLIF"]["KLIF_MOYENNE_AVEC_IDENTITE"] += 1
++            signaler("KLIF_MOYENNE_AVEC_IDENTITE", (o["feuille"], o["ligne"]), o)
++            continue
+         d, st = m.identifier(o)
+         lien_couverture = {"dossier": d["id"] if d else "", "ordre": "", "statut": st}
+         rattachements_couverture[id(o)] = lien_couverture
+@@ -908,9 +1019,6 @@
+         elif o["source"] == "ASTRAL":
+             for dg, q in o["data"]["remedials"].items():
+                 par_periode[(d["id"], p["ordre"], dg)].append(dict(o, degree=dg, rem=q))
+-            for dg in DEGREES:
+-                if dg not in o["data"]["remedials"]:
+-                    par_periode[(d["id"], p["ordre"], dg)].append(dict(o, degree=dg, rem=0))
+ 
+     # ------------------------------------------------ colonnes de sortie
+     colonnes = []
+@@ -1040,6 +1148,15 @@
+                 champs = [(d + "_%s_NOTE" % cible, [x["data"]["note"] for x in g])]
+                 if src == "PARCOURS":
+                     champs.append((d + "_PARCOURS_RESULTAT", [x["data"]["res"] for x in g]))
++                    champs.extend([
++                        (d + "_PARCOURS_NOTE_RECONSTITUEE", [x["data"].get("note_reconstituee") for x in g]),
++                        (d + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
++                         [x["data"].get("origine_note_reconstituee") or None
++                          if x["data"].get("note_reconstituee") is not None else None for x in g]),
++                        (d + "_PARCOURS_STATUT_NOTE_RECONSTITUEE",
++                         [x["data"].get("statut_note_reconstituee") or None
++                          if x["data"].get("note_reconstituee") is not None else None for x in g]),
++                    ])
+                     if d in ("APS1", "APS2"):
+                         champs.append((d + "_PL_PARCOURS_RESULTAT",
+                                        [x["data"]["roles"].get("PL", {}).get("res") for x in g]))
+@@ -1047,7 +1164,9 @@
+                     vals = [x["data"]["roles"].get(role, {}).get("note") for x in g]
+                     if len(ROLES[d]) > 1:
+                         champs.append(("%s_%s_%s_NOTE" % (d, role, cible), vals))
+-                    elif all(x is None for x in champs[0][1]):
++                    elif (all(x is None for x in champs[0][1])
++                          and not any(norm(x["data"].get("observation_brute", {}).get("Note")) == "nogo"
++                                      for x in g)):
+                         champs[0] = (champs[0][0], vals)
+                 # Ne pas fabriquer une combinaison note/resultat depuis des lignes disjointes.
+                 uniques = [(col, unique(vals)[0], vals) for col, vals in champs if unique(vals)[0] is not None]
+@@ -1094,7 +1213,12 @@
+             if g:
+                 val, ok = unique([x["rem"] for x in g])
+                 r[d + "_ASTRAL_REMEDIALS"] = val if val is not None else "PLUSIEURS_VALEURS"
+-                tracer(l, d + "_ASTRAL_REMEDIALS", r[d + "_ASTRAL_REMEDIALS"], g, "COMPTEUR_ASTRAL_AGREGE")
++                tracer(l, d + "_ASTRAL_REMEDIALS", r[d + "_ASTRAL_REMEDIALS"], g,
++                       "COMPTEUR_ASTRAL_EXPLICITEMENT_SOURCE")
++                if val is not None and val > 0:
++                    r[d + "_ASTRAL_PRESENCE_REMEDIAL"] = "OUI"
++                    tracer(l, d + "_ASTRAL_PRESENCE_REMEDIAL", "OUI", g,
++                           "MENTION_EXPLICITE_REMEDIAL_SOURCE")
+                 compte["valeurs_ajoutees_ASTRAL"] += 1
+             if groupes:
+                 r[d + "_ETAT_SOURCES"] = "; ".join(etat) if etat else "SOURCES:" + "+".join(sorted(groupes))
+@@ -1135,6 +1259,9 @@
+         r.update(calc)
+         r["KLIF_ALERTES"] = "; ".join(alertes)
+         tracer(l, "KLIF_*", o["data"]["affectation"], [o], "KLIF_" + st)
++        for col in ("KLIF_ORIGINE", "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS"):
++            if not vide(r[col]):
++                tracer(l, col, r[col], [o], "VALEUR_SOURCE_KLIF_NON_SUBSTITUEE")
+         compte["dossiers_avec_suivi_klif"] += 1
+         compte["issue_" + calc["KLIF_ISSUE_AFFECTATION_1"]] += 1
+ 
+@@ -1154,7 +1281,9 @@
+     controle = couverture.construire(
+         reef_path, sources, observations_lues, rattachements_couverture, provenance,
+         sortie_lignes, entetes, {k: globals()[k] for k in
+-            ("norm", "promo", "degree_de", "role_de", "promotion_avant_12a", "sha", "note", "resultat", "date")})
++            ("norm", "promo", "degree_de", "degree_entete_astral", "role_de", "promotion_avant_12a",
++             "famille_explicitement_exclue", "est_moyenne_klif", "sha", "note", "nombre",
++             "resultat", "date", "FEUILLES_IGNOREES")})
+     ecrire_classeur(fichier, colonnes, entetes, ajout, sortie_lignes, provenance, examiner, corresp, reef_path,
+                     sources, lecture, controle)
+     journal("Verification des cellules du fichier Excel enregistre...")
+@@ -1197,7 +1326,10 @@
+         "regles": ["REEF_REBUILD_LU_SEULEMENT", "KLIF_FEUILLES_ANTERIEURES_12A_IGNOREES",
+                    "AUCUNE_VALEUR_REEF_ECRASEE", "PROPOSITIONS_UTILISEES_APRES_DECISION_OUI",
+                    "VALEUR_VIDE_NON_CONVERTIE_EN_ECHEC", "PLUSIEURS_PASSAGES_NON_FUSIONNES",
+-                   "KLIF_UNE_FOIS_PAR_DOSSIER_SUR_SA_DERNIERE_PERIODE"]}
++                   "KLIF_UNE_FOIS_PAR_DOSSIER_SUR_SA_DERNIERE_PERIODE",
++                   "PROMOTIONS_P_EXCLUES_NOTES_SESSIONS_KLIF", "AVANT_12A_EXCLU_KLIF_SEULEMENT",
++                   "ASTRAL_PRESENCE_EXPLICITE", "NOTE_RECONSTITUEE_DISTINCTE",
++                   "KLIF_DUREE_ENAC_EXCLUS_SOURCE"]}
+     (part / ("BILAN_CONSOLIDATION_%s.json" % horo)).write_text(json.dumps(bilan, ensure_ascii=False, indent=2),
+                                                                 encoding="utf-8")
+     ecrire_registre_population(sortie, registre)
+@@ -1377,7 +1509,13 @@
+         "ISSUE_AFFECTATION_1 : QUALIFIEE (date MU), ECHEC_ARRET_DE_FORMATION (arret declare), SORTIE, AUTRE_CURSUS,",
+         "  DISPONIBILITE, NON_QUALIFIEE_A_LA_DATE_DU_FICHIER (affecte sans MU ni arret), NON_DETERMINEE. Un vide n'est jamais un echec.",
+         "Durees en mois (jours/30,4375) recalculees a partir des dates ; une duree negative n'est pas restituee (alerte).",
++        "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS : duree SOURCE en mois, jamais remplacee par les durees recalculees.",
++        "KLIF_ORIGINE : valeur telle que fournie, sans recodage de CE / CI / promotions / corps.",
++        "ASTRAL : presence OUI seulement si mention remedial explicite ; vide ne signifie pas NON.",
++        "NOTE=NOGO : note reconstituee source conservee distinctement ; NOGO et resultats conserves.",
+         "Feuilles KLIF anterieures a 12A : non etudiees.",
++        "Les promotions P sont exclues de Notes, Sessions et KLIF, quelle que soit l'annee.",
++        "Avant 12A : seule la source KLIF est exclue automatiquement par date.",
+         "Les variantes de nom ne sont pas utilisees automatiquement : decider OUI/NON dans DECISIONS_CORRESPONDANCES.xlsx,",
+         "  puis relancer. Les decisions sont conservees quand les sources sont enrichies.",
+         "",
+@@ -1521,11 +1659,12 @@
+         a.add_argument("--" + k)
+     x = a.parse_args()
+     if x.autotest:
+-        import test_consolidation, test_separation, test_couverture
++        import test_consolidation, test_separation, test_couverture, test_lot_c1_c8
+         historique = test_consolidation.main()
+         separation = test_separation.main()
+         couverture = test_couverture.main()
+-        sys.exit(0 if historique == 0 and separation == 0 and couverture == 0 else 1)
++        lot_c1_c8 = test_lot_c1_c8.main()
++        sys.exit(0 if all(x == 0 for x in (historique, separation, couverture, lot_c1_c8)) else 1)
+     if x.reef and x.sortie:
+         f, b = consolider(x.reef, {"PARCOURS": x.parcours, "NOTES": x.notes, "SESSIONS": x.sessions,
+                                     "ASTRAL": x.astral, "KLIF": x.klif}, x.sortie)
+--- reference/couverture.py
++++ C1_C8/couverture.py
+@@ -8,7 +8,7 @@
+ from itertools import zip_longest
+ from pathlib import Path
+ 
+-REVISION = "2026-11-13-controle-couverture"
++REVISION = "2026-11-13-lot-c1-c8"
+ LIMITE_JSON = 14000  # au plus 28000 unites UTF-16, meme avec caracteres hors BMP
+ ETATS = ("RESTITUEE_EN_SYNTHESE", "CONSERVEE_EN_DETAIL", "EN_ATTENTE_CONSERVEE")
+ H_FEUILLES = ["SOURCE", "FICHIER_LOCAL", "FEUILLE", "STATUT", "MOTIF", "LIGNES_EXAMINEES",
+@@ -77,7 +77,7 @@
+         famille, code = self.r["promo"](valeur)
+         return code if famille in ("ICNA_LETTRE", "ICNA_P", "TSEEAC") else "NON_RECONNUE"
+ 
+-    def contrat(self, src, niveau, label):
++    def contrat(self, src, niveau, label, colonne=None):
+         n = self.r["norm"](label)
+         if src == "REEF":
+             return "VALEUR_REEF_CONSERVEE"
+@@ -87,7 +87,8 @@
+             if niveau == "DETAIL_EVALUATION":
+                 return "DETAIL_BRUT_DOCUMENTE_SANS_TENTATIVE_DEDUITE"
+             if n in {"note", "noteglobale", "resultat", "resultatglobal",
+-                     "noteposition1", "noteposition2", "note1", "note2", "resultat1", "resultat2"}:
++                     "noteposition1", "noteposition2", "note1", "note2", "resultat1", "resultat2",
++                     "notereconstituee", "originenotereconstituee", "statutnotereconstituee"}:
+                 return "SYNTHESE_OU_ROLE_A_CONTROLER"
+             if n in {"position1", "position2", "role1", "role2"}:
+                 return "NORMALISATION_ROLE"
+@@ -104,10 +105,18 @@
+         if src == "ASTRAL":
+             return "BRUT_ASTRAL_CONSERVE_SANS_PREUVE_AUTOMATIQUE_DE_ZERO"
+         if src == "KLIF":
++            if colonne == "A" or n == "matricule":
++                return "CHAMP_KLIF_IDENTIFIANT_IGNORE"
++            if n == "origine":
++                return "CHAMP_KLIF_ORIGINE_SOURCE_CONTROLE"
++            if n == "nombredemoisdequalificationenacexclus":
++                return "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE"
+             if n in {"promo", "datedentreealenac", "nomdustagiaire", "prenomdustagiaire",
+                      "affectation", "zone", "datedaffectation", "dateobtentiondelamuzz",
+                      "arretformation", "nouveaucentre", "datedarrivee", "nombredechecs",
+-                     "datedefindeformation", "modederecrutement"}:
++                     "datedefindeformation", "modederecrutement", "nombredemoisdequalificationenacinclus",
++                     "nombredemoisdequalification", "nombredechecs", "prolongations",
++                     "nombredeprolongations", "dureedeprolongation"}:
+                 return "CHAMP_KLIF_LU_OU_CONSERVE_BRUT"
+             return "CHAMP_KLIF_NON_PREVU_CONSERVE_A_EXAMINER"
+         return "BRUT_CONSERVE_A_EXAMINER"
+@@ -120,8 +129,10 @@
+             typ = "DATE_SOURCE_OU_VALEUR_NON_INTERPRETEE"
+         elif "resultat" in n:
+             typ = "GO_NOGO_OU_TEXTE_SOURCE_SANS_DEDUCTION"
+-        elif src == "ASTRAL" and self.r["degree_de"](str(label)):
++        elif src == "ASTRAL" and self.r["degree_entete_astral"](str(label)):
+             typ = "REMEDIAL_EXPLICITE_OU_POURCENTAGE_OU_ABSENCE_DISTINCTS"
++        elif traitement == "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE":
++            typ = "NOMBRE_DE_MOIS_SOURCE_SANS_SUBSTITUTION"
+         else:
+             typ = "TYPE_SOURCE_CONSERVE"
+         if traitement == "VALEUR_REEF_CONSERVEE":
+@@ -132,6 +143,12 @@
+             dest = "PROVENANCE detail + COUVERTURE_DONNEES ; pas de resultat global derive."
+         elif src == "ASTRAL":
+             dest = "Brut dans COUVERTURE_DONNEES ; compteurs remedials controles, zeros derives non probants."
++        elif traitement == "CHAMP_KLIF_ORIGINE_SOURCE_CONTROLE":
++            dest = "KLIF_ORIGINE : valeur source non codee ; provenance et brute conservees."
++        elif traitement == "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE":
++            dest = "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS : valeur source distincte des durees recalculees."
++        elif traitement == "CHAMP_KLIF_IDENTIFIANT_IGNORE":
++            dest = "Identifiant administratif non exploite pour rapprocher les personnes ; brut conserve."
+         elif src == "KLIF":
+             dest = "Brut dans COUVERTURE_DONNEES ; champs KLIF retenus controles sur derniere periode."
+         else:
+@@ -196,6 +213,11 @@
+         if not rows:
+             info.update(statut="VIDE_OU_ENTETES_SEULS", motif="Aucune cellule utile.")
+             return
++        if info["feuille"].upper() in self.r.get("FEUILLES_IGNOREES", {}).get(src, ()):
++            info.update(statut="EXCLUE_PAR_REGLE", motif="Feuille auxiliaire ignoree par decision C1.")
++            for rec in rows:
++                rec.update(nature="EXCLUE_PAR_REGLE", exclusion="FEUILLE_AUXILIAIRE_C1")
++            return
+         headers, entete, niveau = {}, None, ""
+         if src in ("REEF", "PARCOURS"):
+             for rec in rows[:15]:
+@@ -220,15 +242,26 @@
+                                 motif="Inventaire, metadonnees, alertes ou tableau croise ; donnees brutes conservees.")
+         elif src in ("NOTES", "SESSIONS"):
+             bloc = None
++            hors_cible = False
++            exclusions = 0
+             bloc_refs, dg_bloc = [], ""
+             for rec in rows:
+                 b = str(rec["values"].get("B", "")).strip()
+                 if b.lower().startswith("class:"):
++                    hors_cible = self.r["famille_explicitement_exclue"](b[6:].strip())
++                    if hors_cible:
++                        bloc = None
++                        exclusions += 1
++                        rec.update(nature="EXCLUE_PAR_REGLE", exclusion="POPULATION_HORS_CIBLE_C2",
++                                   promo=self.r["promo"](b[6:].strip())[1] or "")
++                        continue
+                     bloc = rec["ligne"]
+                     rec.update(nature="CANDIDATE", porteur=bloc, niveau="BLOC_" + src,
+                                promo=self.r["promo"](b[6:].strip())[1] or "")
+                     bloc_refs, dg_bloc = [rec], ""
+                     info["candidates"] += 1
++                elif hors_cible:
++                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="POPULATION_HORS_CIBLE_C2")
+                 elif bloc is not None:
+                     rec["porteur"] = bloc
+                     rec["degree"] = dg_bloc
+@@ -244,48 +277,79 @@
+                            "D": "Nombre ou date source", "E": "Role ou information source",
+                            "F": "Role ou resultat source", "G": "Note globale source"}
+             else:
+-                info["motif"] = "Aucun bloc Class: ; contenu brut conserve pour examen."
++                if exclusions:
++                    info.update(statut="EXCLUE_PAR_REGLE", motif="Blocs hors cible explicitement exclus C2.")
++                else:
++                    info["motif"] = "Aucun bloc Class: ; contenu brut conserve pour examen."
+         elif src == "ASTRAL":
+             for rec in rows[:15]:
+-                h = {k: self.r["degree_de"](str(v)) for k, v in rec["values"].items()}
+-                if sum(bool(v) for v in h.values()) >= 3:
++                h = {k: self.r["degree_entete_astral"](str(v)) for k, v in rec["values"].items()}
++                if any(h.values()):
+                     headers, entete = rec["values"], rec["ligne"]
+-                    info.update(statut="LUE_SYNTHESE", motif="En-tete multi-Degree ASTRAL.")
++                    info.update(statut="LUE_SYNTHESE", motif="En-tete Degree ASTRAL exact ; ABES_ ignore.")
+                     break
+-            porteur = None
+             if entete is not None:
++                courant = None
++                suite = []
++                explicite = False
++
++                def terminer_bloc():
++                    nonlocal courant, suite, explicite
++                    if courant is not None:
++                        if explicite:
++                            courant.update(nature="CANDIDATE", niveau="SYNTHESE_ASTRAL",
++                                           promo=self.r["promo"](info["feuille"])[1] or "")
++                            info["candidates"] += 1
++                            for x in suite:
++                                x.update(nature="COMPLEMENT_ASTRAL", porteur=courant["ligne"])
++                        else:
++                            courant["nature"] = "STRUCTURE_OU_TECHNIQUE"
++                            for x in suite:
++                                x["nature"] = "STRUCTURE_OU_TECHNIQUE"
++                    courant, suite, explicite = None, [], False
++
+                 for rec in rows:
+                     if rec["ligne"] <= entete:
+                         continue
+                     label = str(rec["values"].get("B", "")).strip()
+                     if label.upper() == "TOTAL":
++                        terminer_bloc()
++                        rec.update(nature="EXCLUE_PAR_REGLE", exclusion="TOTAL_ASTRAL_C5")
+                         break
+-                    typique = any(re.match(r"^\s*(\d+\s*remedial\(s\)|\d{1,3}\s*%\s*done)\s*$",
+-                                          str(v), re.I) for v in rec["values"].values())
+                     institution = bool(re.match(r"^(ENAC|ENAC\s*/.*|[A-Za-z]{2,12}\s*/\s*[A-Za-z0-9]{2,8})$",
+                                                 label, re.I))
+-                    if label and not institution and typique:
+-                        porteur = rec["ligne"]
+-                        rec.update(nature="CANDIDATE", niveau="SYNTHESE_ASTRAL",
+-                                   promo=self.r["promo"](info["feuille"])[1] or "")
+-                        info["candidates"] += 1
+-                    elif (not label or institution) and porteur is not None:
+-                        rec["nature"] = "COMPLEMENT_ASTRAL"
+-                    else:
++                    # norm() colle les mots : le nom et prenom sont delimites dans le libelle brut.
++                    identite_probable = len(re.findall(r"[A-Za-zÀ-ÿ0-9]+", label)) >= 2
++                    if label and not institution and identite_probable:
++                        terminer_bloc()
++                        courant = rec
++                    elif label and not institution:
++                        terminer_bloc()
+                         rec["nature"] = "DONNEE_ASTRAL_NON_RECONNUE"
+-                        porteur = None
+-                    rec["porteur"] = porteur
++                    elif courant is not None:
++                        suite.append(rec)
++                    rec["porteur"] = courant["ligne"] if courant is not None else None
++                    if courant is not None:
++                        for col, val in rec["values"].items():
++                            if (self.r["degree_entete_astral"](str(headers.get(col, "")))
++                                    and re.fullmatch(r"\s*\d+\s*remedial\(s\)\s*", str(val), re.I)):
++                                explicite = True
++                terminer_bloc()
+         elif src == "KLIF":
+             fam, pr = self.r["promo"](info["feuille"])
+-            if fam in ("ICNA_LETTRE", "ICNA_P") and self.r["promotion_avant_12a"](info["feuille"]):
++            if fam == "ICNA_P":
++                info.update(statut="EXCLUE_PAR_REGLE", motif="KLIF voie P exclue C2.")
++                for rec in rows:
++                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="VOIE_P_C2", promo=pr or "")
++            elif fam == "ICNA_LETTRE" and self.r["promotion_avant_12a"](info["feuille"]):
+                 info.update(statut="EXCLUE_PAR_REGLE", motif="KLIF : promotion anterieure a 12A.")
+                 for rec in rows:
+-                    rec.update(nature="EXCLUE_PAR_REGLE", promo=pr or "")
++                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="KLIF_AVANT_12A_C2", promo=pr or "")
+             elif fam in ("TSEEAC", "DEF", "EXPORT"):
+                 info.update(statut="EXCLUE_PAR_REGLE",
+                             motif="Cursus non ICNA non importe par le lecteur KLIF existant ; brut conserve.")
+                 for rec in rows:
+-                    rec.update(nature="EXCLUE_PAR_REGLE", promo=pr or "")
++                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="FAMILLE_HORS_CIBLE_C2", promo=pr or "")
+             else:
+                 for rec in rows[:6]:
+                     if "promo" in {norm(v) for v in rec["values"].values()}:
+@@ -296,7 +360,7 @@
+                     info["motif"] = "Feuille KLIF sans structure interpretable ; conservation brute."
+         if headers:
+             for k, label in headers.items():
+-                traitement = self.contrat(src, niveau, label)
++                traitement = self.contrat(src, niveau, label, k)
+                 ch = (src, info["feuille"], k, traitement)
+                 self.libelles[ch] = str(label)
+                 self.champs[ch]["non_vides"] += 0
+@@ -306,11 +370,20 @@
+                     info["candidates"] += 1
+                     if src == "KLIF":
+                         identites = [v for k, v in rec["values"].items()
+-                                     if norm(headers.get(k, k)) in ("nomdustagiaire", "prenomdustagiaire")]
++                                     if norm(headers.get(k, k)) in ("nomdustagiaire", "prenomdustagiaire") and v is not None]
+                         premier = norm(rec["values"].get("A", ""))
+-                        if not identites and premier in {"moyenne", "total", "totalgeneral", "mediane", "ecarttype"}:
++                        moyenne = any(self.r["est_moyenne_klif"](v) for v in rec["values"].values())
++                        if not identites and moyenne:
++                            rec.update(nature="EXCLUE_PAR_REGLE", exclusion="MOYENNE_KLIF_C3")
++                            info["candidates"] -= 1
++                        elif not identites and premier in {"total", "totalgeneral", "mediane", "ecarttype"}:
+                             rec["nature"] = "STRUCTURE_OU_TECHNIQUE"
+                             info["candidates"] -= 1
++                        elif not identites:
++                            rec["nature"] = "CONTENU_NON_RECONNU"
++                            info["candidates"] -= 1
++                        elif moyenne:
++                            rec["conflit_moyenne_identite"] = True
+                 if entete is not None and rec["ligne"] <= entete:
+                     continue
+                 rec["headers"] = headers
+@@ -366,6 +439,9 @@
+             if rec["nature"] in ("CONTENU_NON_RECONNU", "DONNEE_ASTRAL_NON_RECONNUE"):
+                 self.probleme(rec, "CONTENU_NON_RECONNU_CONSERVE")
+                 rec["statut"] = "EN_ATTENTE_CONSERVEE"
++            if rec.get("conflit_moyenne_identite"):
++                self.probleme(rec, "KLIF_MOYENNE_AVEC_IDENTITE")
++                rec["statut"] = "EN_ATTENTE_CONSERVEE"
+             if rec["formules"]:
+                 if any(k not in rec["values"] for k in rec["formules"]):
+                     self.probleme(rec, "FORMULE_SANS_CACHE")
+@@ -375,16 +451,25 @@
+                 ref = "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"])
+                 pp = traces.get((o["source"], ref), [])
+                 rec["destinations"] += sorted({str(p[2]) for p in pp})
+-                if self.r["promotion_avant_12a"](o["promo_brute"]):
++                if o["source"] == "KLIF" and self.r["promotion_avant_12a"](o["promo_brute"]):
+                     rec["statut"] = "EN_ATTENTE_CONSERVEE"
+-                    self.probleme(rec, "EXCLUSION_AVANT_12A_" + ("KLIF" if o["source"] == "KLIF" else
+-                                                              "HORS_KLIF_A_CONFIRMER"))
++                    self.probleme(rec, "EXCLUSION_AVANT_12A_KLIF")
++                elif o["source"] in ("NOTES", "SESSIONS", "KLIF") and self.r["famille_explicitement_exclue"](o["promo_brute"]):
++                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
++                    self.probleme(rec, "EXCLUSION_METIER_HORS_CIBLE_C2")
+                 elif not lien.get("dossier") or lien.get("ordre") in (None, ""):
+                     rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                     self.probleme(rec, "RATTACHEMENT_EN_ATTENTE")
++                elif o["source"] == "PARCOURS" and o["data"].get("niveau") == "DETAIL_EVALUATION":
++                    # C8 : le niveau du lecteur prime sur une trace d'origine de ligne.
++                    if any(p[2] == "OBSERVATION_DETAILLEE" for p in pp):
++                        rec["statut"] = "CONSERVEE_EN_DETAIL"
++                    else:
++                        rec["statut"] = "EN_ATTENTE_CONSERVEE"
++                        self.probleme(rec, "DETAIL_SANS_PROVENANCE")
+                 elif any(p[2] != "OBSERVATION_DETAILLEE" for p in pp):
+                     rec["statut"] = "RESTITUEE_EN_SYNTHESE"
+-                elif o["data"].get("niveau") != "DETAIL_EVALUATION":
++                else:
+                     rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                     self.probleme(rec, "OBSERVATION_LUE_SANS_RESTITUTION_SYNTHETIQUE")
+                 if o["source"] not in ("ASTRAL", "KLIF") and not o["degree"]:
+@@ -394,11 +479,13 @@
+             for k, value in rec["values"].items():
+                 if rec.get("headers") and rec["nature"] != "STRUCTURE_OU_TECHNIQUE":
+                     label = rec["headers"].get(k, k)
+-                    traitement = self.contrat(rec["source"], rec["niveau"], label)
++                    traitement = self.contrat(rec["source"], rec["niveau"], label, k)
+                     ch = (rec["source"], rec["feuille"], k, traitement)
+                     self.libelles[ch] = str(label)
+                     self.champs[ch]["non_vides"] += 1
+-                    dg = self.r["degree_de"](str(label)) if rec["source"] in ("ASTRAL", "REEF") else rec["degree"]
++                    dg = ((self.r["degree_entete_astral"](str(label)) if rec["source"] == "ASTRAL"
++                           else self.r["degree_de"](str(label)))
++                          if rec["source"] in ("ASTRAL", "REEF") else rec["degree"])
+                     self.champs_degree[(rec["source"], self.promotion_agregee(rec["promo"]),
+                                         dg or "NON_PRECISE")] += 1
+                     self.champs[ch]["sans_cache"] += int(k in rec["formules"] and k not in rec["values"])
+@@ -432,14 +519,14 @@
+                 for col in rec["values"]:
+                     label = rec["headers"].get(col, col)
+                     ch = (rec["source"], rec["feuille"], col,
+-                          self.contrat(rec["source"], rec["niveau"], label))
++                          self.contrat(rec["source"], rec["niveau"], label, col))
+                     self.champs[ch]["alertes"] += 1
+         bloquantes = sum(v for k, v in self.alertes.items() if k in (
+             "LIGNE_CANDIDATE_ABSENTE_DU_LECTEUR", "FEUILLE_NON_RECONNUE", "FORMULE_SANS_CACHE",
+-            "OBSERVATION_LECTEUR_SANS_LIGNE_SOURCE", "CHAMP_UTILE_NON_RESTITUE",
++            "OBSERVATION_LECTEUR_SANS_LIGNE_SOURCE", "CHAMP_UTILE_NON_RESTITUE", "DETAIL_SANS_PROVENANCE",
+             "VALEUR_NON_INTERPRETEE", "DEGREE_NON_RECONNU", "ROLE_NON_RECONNU",
+             "CHAMP_NON_PREVU_CONSERVE", "CONTENU_NON_RECONNU_CONSERVE", "PROMOTION_NON_RECONNUE",
+-            "EXCLUSION_AVANT_12A_HORS_KLIF_A_CONFIRMER"))
++            "KLIF_MOYENNE_AVEC_IDENTITE"))
+         candidates = sum(v["observations_candidates"] for v in self.volumes.values())
+         classes = {st: sum(v[st] for v in self.volumes.values()) for st in ETATS}
+         if candidates != sum(classes.values()):
+@@ -460,6 +547,9 @@
+             "par_source": {s: dict(c) for s, c in sorted(self.volumes.items())},
+             "exclusions_lignes_non_vides_par_source": dict(Counter(
+                 r["source"] for r in self.donnees if r["nature"] == "EXCLUE_PAR_REGLE")),
++            "exclusions_par_regle": dict(sorted(Counter(
++                r.get("exclusion") for r in self.donnees if r.get("exclusion")).items())),
++            "moyennes_klif_ignorees": sum(r.get("exclusion") == "MOYENNE_KLIF_C3" for r in self.donnees),
+             "couverture_par_source_promotion_degree_niveau": [
+                 {"source": s, "promotion": pr, "degree": dg, "niveau": ni, "statuts": dict(c)}
+                 for (s, pr, dg, ni), c in sorted(self.groupes.items())],
+@@ -470,7 +560,7 @@
+                        "Les champs documentaires et identifiants non exploites restent conserves en brut.",
+                        "Les sources non selectionnees ne sont pas declarees couvertes.",
+                        "Les formules sources ne sont pas recalculees.",
+-                       "Les zeros ASTRAL derives ne prouvent pas un zero explicitement renseigne."]}
++                       "Seules les mentions remedial ASTRAL explicites alimentent le compteur ; absence n'est pas NON."]}
+         if self.sources_absentes:
+             self.bilan["limites"].append("Conclusion limitee aux sources selectionnees, pas aux cinq sources potentielles.")
+         return self
+@@ -494,15 +584,31 @@
+             for champ in ("note", "noteglobale"):
+                 if champ in raw:
+                     x = self.r["note"](raw[champ])
+-                    if x is None:
++                    if norm(raw[champ]) == "nogo":
++                        raw_reconst = raw.get("notereconstituee")
++                        nr = self.r["note"](raw_reconst)
++                        if nr is not None:
++                            attendus.append((dg + "_PARCOURS_NOTE_RECONSTITUEE", nr))
++                            if raw.get("originenotereconstituee"):
++                                attendus.append((dg + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
++                                                raw["originenotereconstituee"]))
++                            if raw.get("statutnotereconstituee"):
++                                attendus.append((dg + "_PARCOURS_STATUT_NOTE_RECONSTITUEE",
++                                                raw["statutnotereconstituee"]))
++                        elif raw_reconst not in (None, ""):
++                            self.probleme(rec, "VALEUR_NON_INTERPRETEE")
++                    elif x is None and raw[champ] not in (None, ""):
+                         self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+-                    else:
++                    elif x is not None:
+                         attendus.append((dg + "_PARCOURS_NOTE", x))
+                     break
+             res = raw.get("resultat", raw.get("resultatglobal"))
+             if res is not None and res != "":
+                 attendus.append((dg + "_PARCOURS_RESULTAT", self.r["resultat"](res) or str(res).strip()))
+             for i in ("1", "2"):
++                trait = norm(raw.get("traitementposition2", "")) + " " + norm(raw.get("position2interpretee", ""))
++                if i == "2" and any(t in trait for t in ("neutralis", "ignore", "nonretenu")):
++                    continue  # neutralisation explicite source, non suppression de l'observation
+                 pos = raw.get("position" + i, raw.get("role" + i))
+                 n = raw.get("noteposition" + i, raw.get("note" + i))
+                 res = raw.get("resultat" + i)
+@@ -615,22 +721,24 @@
+                 cible = sorties.get((did, ordre), {})
+                 expected = {}
+                 if key[0] == "ASTRAL":
+-                    counts = Counter({dg: 0 for h in rec.get("headers", {}).values()
+-                                      if (dg := self.r["degree_de"](str(h)))})
++                    counts = Counter()
+                     parties = [rec] + complements[(rec["feuille"], rec["ligne"])]
+                     for r in parties:
+                         for col, v in r["values"].items():
+                             if col in ("A", "B"):
+                                 continue
+-                            dg = self.r["degree_de"](str(rec.get("headers", {}).get(col, "")))
++                            titre = str(rec.get("headers", {}).get(col, ""))
++                            dg = self.r["degree_entete_astral"](titre)
+                             match = re.fullmatch(r"\s*(\d+)\s*remedial\(s\)\s*", str(v), re.I)
+                             if dg and match:
+                                 counts[dg] += int(match[1])
+                             elif dg and not re.fullmatch(r"\s*\d{1,3}\s*%\s*done\s*", str(v), re.I):
+                                 self.probleme(r, "VALEUR_NON_INTERPRETEE")
+-                            elif not dg:
++                            elif not dg and titre and not norm(titre).startswith("abes"):
+                                 self.probleme(r, "DEGREE_NON_RECONNU")
+                     expected = {dg + "_ASTRAL_REMEDIALS": n for dg, n in counts.items()}
++                    expected.update({dg + "_ASTRAL_PRESENCE_REMEDIAL": "OUI"
++                                     for dg, n in counts.items() if n > 0})
+                 else:
+                     if cible.get("KLIF_PORTEE") != "SUIVI_KLIF_DU_DOSSIER":
+                         continue  # les divergences sont conservees brutes, sans nouveau choix
+@@ -640,6 +748,7 @@
+                         continue
+                     mapping = {"datedentreealenac": "KLIF_DATE_ENTREE_ENAC", "affectation": "KLIF_AFFECTATION_1",
+                                "zone": "KLIF_ZONE", "datedaffectation": "KLIF_DATE_AFFECTATION_1",
++                               "origine": "KLIF_ORIGINE",
+                                "nouveaucentre": "KLIF_NOUVEAU_CENTRE", "datedarrivee": "KLIF_DATE_ARRIVEE_2",
+                                "nombredechecs": "KLIF_NB_ECHECS", "datedefindeformation": "KLIF_DATE_FIN_FORMATION"}
+                     episode = 1
+@@ -652,6 +761,13 @@
+                             ciblecol = "KLIF_DATE_MU_" + str(episode)
+                         if n == "arretformation":
+                             ciblecol = "KLIF_ARRET_" + str(episode)
++                        if n == "nombredemoisdequalificationenacexclus" and col in rec["values"]:
++                            expected["KLIF_DUREE_ENAC_EXCLUS_BRUTE"] = rec["values"][col]
++                            nb = self.r["nombre"](rec["values"][col])
++                            if nb is not None and nb >= 0:
++                                expected["KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS"] = nb
++                            elif rec["values"][col] not in (None, ""):
++                                self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                         if ciblecol and col in rec["values"]:
+                             expected[ciblecol] = rec["values"][col]
+                     dernier = max(p for d, p in sorties if d == did)
+@@ -715,7 +831,10 @@
+         li.append(["Le contrat BRUT_DOCUMENTE ne signifie pas qu'un champ alimente une colonne metier ; voir COUVERTURE_CHAMPS."])
+         li.append(["Les motifs et CHAMPS_EN_CAUSE de COUVERTURE_DONNEES donnent les anomalies exactes ; OBSERVATIONS_AVEC_ALERTE porte sur la ligne source, pas uniquement ce champ."])
+         li.append(["Alias conserves : BASIC_TOWER=BTWR, BASIC_ACC=BSURV ; Cordon/Planner=PL, Approche=AP ; CO/CR selon le Degree. EleveId/id_Aurion conserves, sans nouvelle cle universelle."])
+-        li.append(["Exclusion historique avant 12A hors KLIF : signalee A_CONFIRMER si rencontree, sans modifier silencieusement la regle existante."])
++        li.append(["C2 : l'exclusion par date avant 12A s'applique a KLIF seulement ; les anciennes exclusions du registre restent archivees."])
++        li.append(["C2 : promotions P exclues de KLIF, Notes et Sessions sans ajout de population."])
++        li.append(["C3 : les lignes Moyenne KLIF sont ignorees par contenu si l'identite est vide ; conflit avec identite conserve a examiner."])
++        li.append(["C8 : les details restent classes en detail, meme avec une trace supplementaire d'origine de population."])
+         li.append(["Le bilan agrege distingue collecte, restitution et exploitation. Une ambiguite conservee n'est pas une perte."])
+ 
+     def verifier(self, fichier):
+--- reference/test_couverture.py
++++ C1_C8/test_couverture.py
+@@ -226,12 +226,18 @@
+         self.assertEqual(etats["12A"], "LUE_SYNTHESE")
+         self.assertGreater(b["exclusions_lignes_non_vides_par_source"]["KLIF"], 0)
+ 
+-    def test_18_filtre_global_historique_signale_non_change(self):
++    def test_18_filtre_avant_12a_limite_a_klif_par_c2(self):
+         r = self.row.copy(); r[3] = "99A"
+         self.ecrire([r])
+-        _, b = self.executer()
+-        self.assertIn("EXCLUSION_AVANT_12A_HORS_KLIF_A_CONFIRMER", b["alertes_par_cause"])
+-        self.assertEqual(b["collecte"], "COUVERTURE_PARTIELLE_EXPLIQUEE")
++        f, b = self.executer()
++        self.assertNotIn("EXCLUSION_AVANT_12A_HORS_KLIF_A_CONFIRMER", b["alertes_par_cause"])
++        w = load_workbook(f, read_only=True, data_only=True)
++        try:
++            rows = list(w["PARCOURS_CONSOLIDES"].iter_rows(values_only=True))
++            promo_col = rows[0].index("PROMOTION")
++            self.assertIn("99A", [row[promo_col] for row in rows[1:]])
++        finally:
++            w.close()
+ 
+     def test_19_bilan_partageable_sans_donnees_individuelles(self):
+         self.ecrire()
+--- reference/LIRE_MOI.txt
++++ C1_C8/LIRE_MOI.txt
+@@ -1,6 +1,7 @@
+ ﻿FICHIER CONSOLIDE DES PARCOURS - LIVRAISON COMPLETE
+-Revision : 2026-11-13-controle-couverture
+-Base : applicatif existant 2026-11-13-separation-synthese-details.
++Revision : 2026-11-13-lot-c1-c8
++Base conforme : applicatif existant 2026-11-13-controle-couverture.
++Aucun autre applicatif ni nouveau lanceur.
+ Livraison complete : ne pas remplacer seulement consolidation.py.
+ 
+ LANCEMENT
+@@ -75,9 +76,10 @@
+ Tests integres : dans une invite de commandes de ce dossier, executer
+ LANCER_WINDOWS.bat --tests
+ Ce sont les options du lanceur existant, sans lanceur supplementaire.
+-40 controles historiques + 21 tests de separation + 25 tests de couverture :
+-86 verifications reussies sur donnees fictives ; voir RESULTATS_TESTS.txt.
+-Les tests historiques sont identiques a la base stricts-12A.
++40 controles historiques + 21 tests de separation + 25 tests de couverture
++(dont un test adapte a la decision C2) + 15 tests C1-C8 : 101 verifications
++reussies sur donnees fictives ; voir RESULTATS_TESTS.txt et BILAN_TESTS.json.
++Ces tests ne remplacent pas les essais sur le PC Windows et les sources reelles.
+ 
+ CONTROLE DE COUVERTURE INTEGRE
+ L'inventaire est etabli directement depuis les fichiers choisis, independamment
+@@ -122,12 +124,24 @@
+ sources historiques elles-memes sont completes ni que toutes les identites sont
+ demontrees. Une source non selectionnee n'est pas annoncee comme couverte.
+ 
+-POINT DE VIGILANCE SUR LE PERIMETRE HISTORIQUE
+-L'applicatif de depart appliquait aussi le filtre avant 12A hors KLIF.
+-Cette livraison ne change pas silencieusement cette regle : si ces observations
+-sont rencontrees, elles sont conservees dans l'audit et signalees
+-EXCLUSION_AVANT_12A_HORS_KLIF_A_CONFIRMER. Leur presence interdit une conclusion
+-complete. Les feuilles KLIF avant 12A restent exclues des observations exploitees.
++LOT AUTORISE C1-C8
++C1 : trois feuilles REEF et AUDIT_DEGREES Notes ignorees, mais archivees localement.
++C2 : promotions P exclues de KLIF, Notes, Sessions ; avant12A = KLIF seulement.
++     Les anciennes exclusions du registre sont preservees ; inconnus non exclus.
++C3 : Moyenne KLIF reconnue dans toute colonne si nom/prenom vides ; en presence
++     d'identite, conflit conserve dans A_EXAMINER. Aucun nombre impose de moyennes.
++C4 : deux dossiers 18A explicitement autorises : ACS1/ACS2 MCTA18A vers
++     periode 1 ; ACS2 MCTA18Abis vers periode 2. Aucun usage de EleveId.
++C5 : presence remedial ASTRAL issue d'une mention explicite du Degree utile ;
++     ABES_ et TOTAL ignores. Aucun NON ni zero deduit d'une cellule vide.
++C6 : KLIF_ORIGINE conservee brute ; KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS
++     est une duree source en mois, distincte de celles recalculees. Matricule et
++     colonne A non utilises ; prolongations brutes non exploitees.
++C7 : quand Note=NOGO, Note reconstituee fournie avec origine/statut est
++     distincte du resultat et de la note globale ; aucun GO ni calcul deduit.
++     La neutralisation explicite de Position 2 reste tracee dans le brut.
++C8 : un detail ne devient jamais une synthese par presence d'une autre trace.
++     Les details omis ou non rattachables restent signales en attente.
+ 
+ LIMITES DE VALIDATION
+ Les tests de cette livraison portent sur des donnees fictives. Les anciens

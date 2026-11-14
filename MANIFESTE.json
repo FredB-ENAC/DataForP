@@ -1,0 +1,32 @@
+{
+  "revision": "2026-11-13-lot-c1-c8-r1-provenance",
+  "type": "application_existante_complete",
+  "base_revision": "2026-11-13-lot-c1-c8",
+  "base_zip_sha256": "3fc23974e7ec838316f1c45824f1ffe33f0950b39c3e4438556dfb1df10021d7",
+  "ancien_manifeste_sha256": "d28aeb7e2eba363dd36cc54821d5512ec86bf789e6164cb18a8df94014acf1aa",
+  "lanceur_et_dependances_inchanges": true,
+  "correction_limitee": "controle de PROVENANCE apres sauvegarde et diagnostics sans donnees sources",
+  "validation": "105/105 tests fictifs + stress synthetique 32274 lignes; Windows et ligne reelle non testes",
+  "sha256": {
+    "consolidation.py": "41e3ed9fb17040db1043efb4c1edf2df3d6700266cab451c4e4d8bd65e554f6a",
+    "couverture.py": "8986e9a6d821c1bd280dedab37d73253c7e52f6faca11636141b0dc93a5cab46",
+    "test_consolidation.py": "d50f72e0282dd955c50a45f78ba93a46014e9db1b1cd207b6d06890bacbd4685",
+    "test_separation.py": "b4a920dd9e92d7bc79efefa4fb390cc0e8c8c356ec4adbf1f3aeaa786e5c7024",
+    "test_couverture.py": "43ceb484d25c36ad47d899aac1189b7466552cff89f5527c2c7f2df8e7911c3c",
+    "test_lot_c1_c8.py": "d8e075ab6ebf4465551ee22f7fd2c969f5cbe734ff06e094235c6d46b84eacda",
+    "LANCER_WINDOWS.bat": "ba2561c86c9e5724d9b4e9b1d02f334d5dba00e78298b6fc104875f27ee941a9",
+    "requirements.txt": "03a53fc2d9e1ff59642c860c6ced142ed191ad088b82f190d2d4502641d16f33",
+    "LIRE_MOI.txt": "93c90299adc6c7a0ddcce557291ec6d25ad0957d8e4cfb616414f4c50a00c6b2",
+    "NOTE_LIVRAISON.md": "40c3435b6d0c8024288c23108adeb4cda14ded22c95a3aee526120207b69ddea",
+    "MODIFICATIONS.diff": "80a76714778dcccd76cdd1c0de9f10d5e38a6c9b82fbe57d895a1d4da908acbf",
+    "MODIFICATIONS_C1_C8.diff": "c5f7e69e7766c78deca5220e7c035317c102fd6b08c1d71f1ae41fcc753edc47",
+    "MATRICE_RECEPTION_C1_C8.csv": "1907adc0426e225675cd6487abeff0d3dec138a4ab07e84903f2ce07ef15cdba",
+    "MANIFESTE_BASE.json": "82958c146bee84c2b3a076255d9e1c1ebb40eeee44b1f14a88048e32dd517fc5",
+    "SPECIFICATION_C1_C8.pdf": "ad94f0b4a0a0087563a1857e635ef98cc9a0509a45828ee362374de0b54a7c2f",
+    "RESULTATS_TESTS.txt": "8fa445def5409f281d47ae74fefe6252918c6c1367a8b6fa3a6aba193a627809",
+    "BILAN_TESTS.json": "9de1050604e0676de88c69f34d55cc68eb4f08e5bc80fefc534b680d3381bb57",
+    "MANIFESTE_C1_C8_PRECEDENT.json": "d28aeb7e2eba363dd36cc54821d5512ec86bf789e6164cb18a8df94014acf1aa",
+    "MODIFICATIONS_R1_PROVENANCE.diff": "61ad9b8ce682aa3afec6ab96ee5f42acc3c697360b2b0bfe8941df9baf20d15c",
+    "ESSAI_PROVENANCE_32275.txt": "9a16eedf7fad09b079c27c50952615c52d9150457546837b5e94f6c1e74c1be6"
+  }
+}

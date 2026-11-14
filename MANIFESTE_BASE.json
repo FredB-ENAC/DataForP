@@ -1,0 +1,22 @@
+{
+  "revision": "2026-11-13-controle-couverture",
+  "base_revision": "2026-11-13-separation-synthese-details",
+  "base_consolidation_sha256": "7cfccea6a7c39cd4c60513cb5f237340a6c1a48c0403dbeeb9de00d2ae063e9d",
+  "lanceur_et_dependances_inchanges": true,
+  "compatibilite_syntaxique_python_3_10": true,
+  "validation": "86 verifications sur donnees fictives ; Windows et GUI non executes",
+  "sha256": {
+    "consolidation.py": "59f5f061b43e628d1d3cb072442992b284574a157086d51cb3cc8428f9ae1404",
+    "couverture.py": "8a70886193fd527599d4dbeea172633e4166bee74c96742831fdde619d7c56bb",
+    "test_consolidation.py": "d50f72e0282dd955c50a45f78ba93a46014e9db1b1cd207b6d06890bacbd4685",
+    "test_separation.py": "b4a920dd9e92d7bc79efefa4fb390cc0e8c8c356ec4adbf1f3aeaa786e5c7024",
+    "test_couverture.py": "62b90d0df9c6604510f0d4248f4f6da08340d92be6d4e2059c172bb6ecb2f563",
+    "requirements.txt": "03a53fc2d9e1ff59642c860c6ced142ed191ad088b82f190d2d4502641d16f33",
+    "LANCER_WINDOWS.bat": "ba2561c86c9e5724d9b4e9b1d02f334d5dba00e78298b6fc104875f27ee941a9",
+    "LIRE_MOI.txt": "4725455374c5f18c3f4daaf403e5ace9115f34fec3fafa73337eadf0da1c3767",
+    "RESULTATS_TESTS.txt": "41e8df63a76feb1a93df302b3301051dd15cf8739b4149072ad60e7ab2604a59",
+    "BILAN_TESTS.json": "23f818f2a72f7d8c1ec849c48c64e7a6dc6edb89e53142b2bec3bc959a6a8fa8",
+    "MODIFICATIONS.diff": "80a76714778dcccd76cdd1c0de9f10d5e38a6c9b82fbe57d895a1d4da908acbf",
+    "NOTE_LIVRAISON.md": "14a4e10fde495015fa8adda5a524b816a802062685d44d4eea5593a716b55f81"
+  }
+}

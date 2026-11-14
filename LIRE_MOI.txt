@@ -1,0 +1,193 @@
+﻿FICHIER CONSOLIDE DES PARCOURS - LIVRAISON COMPLETE
+Revision : 2026-11-13-lot-c1-c8-r1-provenance-r1-provenance
+Base conforme : applicatif existant 2026-11-13-controle-couverture.
+Aucun autre applicatif ni nouveau lanceur.
+Livraison complete : ne pas remplacer seulement consolidation.py.
+
+LANCEMENT
+Extraire le ZIP dans un nouveau dossier. Double-cliquer LANCER_WINDOWS.bat.
+Choisir les memes fichiers sources et LE MEME DOSSIER DE RESULTATS que precedemment
+pour retrouver decisions et registre. Les anciens classeurs produits sont conserves.
+Ne supprimer ni DECISIONS_CORRESPONDANCES.xlsx ni REGISTRE_POPULATION_LOCAL.json.
+Le classeur nouveau est dans LOCAL ; le bilan agrege dans PARTAGEABLE.
+
+ENVIRONNEMENT INCHANGE
+Le lanceur est celui confirme dans le projet : utilise py -3 ou python, sans nouveau
+.venv. requirements.txt conserve openpyxl>=3.1.5,<4. Le lanceur existant verifie
+Python >= 3.10 et propose une installation SEULEMENT si openpyxl est absent, avec
+confirmation explicite. Aucune nouvelle exigence Python ni dependance n'est ajoutee
+par cette correction. Si une mise a jour est annoncee, ne rien installer sans accord.
+
+CORRECTION DES NIVEAUX
+Les observations sont classees SYNTHESE_PARCOURS, DETAIL_EVALUATION ou
+NIVEAU_INDETERMINE. Les champs complementaires de synthese (resultat global,
+notes et resultats PL) ne sont alimentes que par les syntheses comparables.
+Les notes et resultats de Details Eval ne deviennent plus un resultat global.
+Les details seuls ne creent pas de dossier ni de periode et n'inventent pas de
+resultat global. Leur identite/periode est recherchee selon les regles conservees.
+Les resultats non vides non normalises (ex. NON_EVALUE) restent explicites.
+Les champs vides ne sont pas deduits de la note ni remplis depuis les details.
+Une combinaison note/resultat qui n'existe sur aucune observation unique est
+signalee SYNTHESE_COMPOSITE_NON_JUSTIFIEE, sans synthese artificielle.
+
+LIRE PROVENANCE
+Colonnes historiques conservees ; nouvelles colonnes ajoutees a droite.
+Filtrer COLONNE=OBSERVATION_DETAILLEE pour retrouver CHAQUE observation detaillee,
+meme si les valeurs sont identiques. Filtrer NIVEAU=DETAIL_EVALUATION pour le niveau.
+Les colonnes comprennent role, resultat observe, rattrapage source, passage
+TECHNIQUE, EvalId/RoleId contextuels, simulation, fichier/feuille/ligne historiques,
+statut du rattachement et OBSERVATION_SOURCE_JSON avec toutes les cellules lues.
+Le contenu brut conserve le role original ; ROLE presente sa normalisation quand
+elle est reconnue. Aucune chronologie metier n'est deduite du passage technique
+ni de Date fichier. Les details sans rattachement certain sont conserves avec
+un statut explicite et sans periode choisie arbitrairement.
+Pour les champs de synthese, chaque observation justificative a sa propre ligne.
+Les references ne sont plus limitees aux six premieres observations.
+
+LIRE A_EXAMINER
+Pour les conflits de champs : une ligne par observation candidate, avec ID_CAS
+commun, periode, champ exact, role, valeur, niveau, repere et raison du blocage.
+PROVENANCE reprend ces candidats avec le meme ID_CAS. Toutes les occurrences
+restent presentes, meme lorsque leurs valeurs se repetent.
+PLUSIEURS_VALEURS_MEME_PERIODE compare uniquement les valeurs au meme niveau.
+Cela ne prouve pas plusieurs passages metier.
+DETAIL_EVALUATION_DIVERGENTE est maintenu quand des resultats divergent pour des
+observations partageant dossier/periode/Degree et tous les reperes techniques
+historiques requis (source, feuille, ligne, EvalId, RoleId, passage, rattrapage,
+simulation). Ces identifiants ne sont pas utilises comme identite universelle.
+Sans ces reperes, les details restent conserves et aucun lien d'evaluation n'est
+invente. Le fichier de decisions d'identite n'est pas detourne pour arbitrer les notes.
+Les autres causes (periode ambigue, etc.) conservent leur fonctionnement.
+
+UNITES / BILAN
+points_a_examiner_par_cause compte des groupes/cas. Pour les nouveaux conflits,
+un cas designe un champ et un contexte, avec plusieurs lignes candidates dans
+A_EXAMINER. Le nombre de lignes de cette feuille n'est donc pas un nombre d'eleves.
+separation_niveaux distingue observations hors synthese, rattachements resolus,
+champs de resultat global mixtes avant separation, champs retablis depuis une
+synthese, cas sans resultat de synthese et divergences restantes.
+Les details multiples sans contradiction entre objets comparables sont conserves,
+pas comptes artificiellement comme conflits du resultat global.
+
+CONTROLES
+Le classeur est relu apres sauvegarde : cellules principales, toutes les cellules
+de PROVENANCE (y compris JSON/details) et tous les candidats de conflits dans
+A_EXAMINER sont verifies. Une divergence declenche une erreur.
+Tests integres : dans une invite de commandes de ce dossier, executer
+LANCER_WINDOWS.bat --tests
+Ce sont les options du lanceur existant, sans lanceur supplementaire.
+40 controles historiques + 21 tests de separation + 25 tests de couverture
+(dont un test adapte a la decision C2) + 15 tests C1-C8 : 101 verifications
+reussies sur donnees fictives ; voir RESULTATS_TESTS.txt et BILAN_TESTS.json.
+Ces tests ne remplacent pas les essais sur le PC Windows et les sources reelles.
+
+CONTROLE DE COUVERTURE INTEGRE
+L'inventaire est etabli directement depuis les fichiers choisis, independamment
+des observations acceptees par les lecteurs. Il ne lance aucun autre applicatif.
+Toutes les feuilles des fichiers choisis recoivent un statut, y compris les
+feuilles vides, techniques, exclues et non reconnues.
+
+Le classeur LOCAL contient trois feuilles supplementaires :
+- COUVERTURE_FEUILLES : inventaire, statuts, motifs et reconciliation des volumes.
+- COUVERTURE_DONNEES : chaque ligne source non vide et toutes ses valeurs brutes,
+  ses formules, son devenir, son contexte et les champs eventuellement en cause.
+- COUVERTURE_CHAMPS : libelles, types attendus, traitement, destination et controles,
+  y compris les colonnes presentes mais entierement vides.
+Ces feuilles sont nominatives et restent exclusivement dans LOCAL.
+
+Les donnees brutes sont du JSON indexe par lettre de colonne source ; les en-tetes
+originaux sont archives eux aussi. Pour un contenu long, filtrer ID_LIGNE_IMPORT,
+trier par PARTIE_JSON puis reunir CELLULES_SOURCE_JSON dans cet ordre.
+Le decoupage evite la limite Excel, y compris avec caracteres Unicode hors BMP.
+Si le JSON de PROVENANCE est trop long, il contient un renvoi explicite vers
+COUVERTURE_DONNEES au lieu d'un contenu tronque. Les identifiants L_ ne sont
+ni des identites d'eleves ni des cles stables apres deplacement de lignes sources.
+
+Les controles recherchent notamment une ligne oubliee par un lecteur, un champ
+nouveau non interprete, une note/date illisible, une formule sans valeur calculee,
+une perte de resultat PL, une omission de champ REEF, de compteur Sessions/ASTRAL
+ou de valeur KLIF. Toutes les feuilles de couverture sont relues apres sauvegarde.
+Les formules sources ne sont ni recalculees ni sauvegardees par l'application.
+Les champs non exploites ne recoivent pas une nouvelle regle metier : ils restent
+accessibles en brut et leur traitement est explicite.
+
+Le bilan PARTAGEABLE comporte couverture_donnees, sans noms, chemins locaux,
+identifiants individuels ni valeurs individuelles. Il distingue collecte,
+restitution et exploitation, les sources absentes, exclusions, alertes et volumes
+par source/promotion/Degree/niveau. Les compteurs de cellules ne sont pas des
+nombres d'eleves ; les lignes JSON fragmentees ne sont pas des observations en plus.
+
+Une ambiguite conservee peut coexister avec une collecte complete du perimetre
+selectionne et une exploitation SOUS_RESTRICTIONS. Une feuille utile inconnue
+donne COUVERTURE_NON_DEMONTREE. Les omissions/type/alias non pris en charge
+donnent COUVERTURE_PARTIELLE_EXPLIQUEE. Aucune conclusion ne certifie que les
+sources historiques elles-memes sont completes ni que toutes les identites sont
+demontrees. Une source non selectionnee n'est pas annoncee comme couverte.
+
+LOT AUTORISE C1-C8
+C1 : trois feuilles REEF et AUDIT_DEGREES Notes ignorees, mais archivees localement.
+C2 : promotions P exclues de KLIF, Notes, Sessions ; avant12A = KLIF seulement.
+     Les anciennes exclusions du registre sont preservees ; inconnus non exclus.
+C3 : Moyenne KLIF reconnue dans toute colonne si nom/prenom vides ; en presence
+     d'identite, conflit conserve dans A_EXAMINER. Aucun nombre impose de moyennes.
+C4 : deux dossiers 18A explicitement autorises : ACS1/ACS2 MCTA18A vers
+     periode 1 ; ACS2 MCTA18Abis vers periode 2. Aucun usage de EleveId.
+C5 : presence remedial ASTRAL issue d'une mention explicite du Degree utile ;
+     ABES_ et TOTAL ignores. Aucun NON ni zero deduit d'une cellule vide.
+C6 : KLIF_ORIGINE conservee brute ; KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS
+     est une duree source en mois, distincte de celles recalculees. Matricule et
+     colonne A non utilises ; prolongations brutes non exploitees.
+C7 : quand Note=NOGO, Note reconstituee fournie avec origine/statut est
+     distincte du resultat et de la note globale ; aucun GO ni calcul deduit.
+     La neutralisation explicite de Position 2 reste tracee dans le brut.
+C8 : un detail ne devient jamais une synthese par presence d'une autre trace.
+     Les details omis ou non rattachables restent signales en attente.
+
+LIMITES DE VALIDATION
+Les tests de cette livraison portent sur des donnees fictives. Les anciens
+resultats de rejeu ne sont pas annonces comme reexecutes par cette livraison.
+Il faut relancer localement les sources nominatives pour mesurer leur couverture
+et examiner les cas en attente, decisions inutilisees et periodes ambigues.
+Le lanceur Windows et l'interface graphique n'ont pas ete executes ici.
+Aucun classeur source, aucune decision reelle et aucun registre reel ne sont livres
+ni modifies dans ce paquet.
+
+CORRECTIF R1 - VERIFICATION DE PROVENANCE
+Cette revision conserve C1-C8. Elle traite une cause reproductible de faux
+ecarts apres sauvegarde dans PROVENANCE : Excel ne conserve pas toujours sous
+forme numerique l'integralite d'un grand identifiant, d'une valeur tres precise
+ou de sous-millisecondes d'une date. Ces valeurs sont ecrites EN TEXTE EXACT
+dans PROVENANCE si necessaire, et controlees cellule par cellule apres sauvegarde.
+Les nombres ordinaires et les dates ordinaires conservent leur type. Une chaine
+de plus de 32767 caracteres ne sera pas tronquee silencieusement : erreur explicite.
+En cas d'ecart residuel, le message precise ligne/colonne et types, SANS valeurs.
+Cette correction n'a pas pu etre confrontee a la ligne 32275 de vos sources
+nominatives : une nouvelle reception locale reste indispensable. Ne pas valider
+un classeur issu d'une execution en erreur.
+
+CONSEILS DE RELANCE
+Extraire l'archive complete dans un NOUVEAU dossier, ne pas melanger les versions.
+Conserver et sauvegarder localement decisions, registre et resultats existants.
+Lancer les tests (--tests) puis executer sur les memes sources et meme destination.
+Si erreur : transmettre uniquement le nouveau message d'erreur (sans valeurs)
+ainsi que le nom de la revision, pas le fichier nominatif.
+
+CORRECTIF R1 - VERIFICATION DE PROVENANCE
+Cette revision conserve C1-C8. Elle traite une cause reproductible de faux
+ecarts apres sauvegarde dans PROVENANCE : Excel ne conserve pas toujours sous
+forme numerique l'integralite d'un grand identifiant, d'une valeur tres precise
+ou de sous-millisecondes d'une date. Ces valeurs sont ecrites EN TEXTE EXACT
+dans PROVENANCE si necessaire, et controlees cellule par cellule apres sauvegarde.
+Les nombres ordinaires et les dates ordinaires conservent leur type. Une chaine
+de plus de 32767 caracteres ne sera pas tronquee silencieusement : erreur explicite.
+En cas d'ecart residuel, le message precise ligne/colonne et types, SANS valeurs.
+Cette correction n'a pas pu etre confrontee a la ligne 32275 de vos sources
+nominatives : une nouvelle reception locale reste indispensable. Ne pas valider
+un classeur issu d'une execution en erreur.
+
+CONSEILS DE RELANCE
+Extraire l'archive complete dans un NOUVEAU dossier, ne pas melanger les versions.
+Conserver et sauvegarder localement decisions, registre et resultats existants.
+Lancer les tests (--tests) puis executer sur les memes sources et meme destination.
+Si erreur : transmettre uniquement le nouveau message d'erreur (sans valeurs)
+ainsi que le nom de la revision, pas le fichier nominatif.
