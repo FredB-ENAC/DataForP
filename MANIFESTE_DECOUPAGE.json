@@ -1,0 +1,95 @@
+{
+  "version_outil": "1.0",
+  "fichier_original": "consolidation.py",
+  "nombre_lignes": 1727,
+  "lignes_par_partie": 150,
+  "octets_original": 87149,
+  "sha256_original": "41e3ed9fb17040db1043efb4c1edf2df3d6700266cab451c4e4d8bd65e554f6a",
+  "reassemblage_identique": true,
+  "parties": [
+    {
+      "fichier": "part_0001.txt",
+      "premiere_ligne": 1,
+      "derniere_ligne": 150,
+      "octets": 5890,
+      "sha256": "d2298f4a0216368a23fbeb26f956e2c9dfb1f15a2fcaf65e2285b172790da986"
+    },
+    {
+      "fichier": "part_0002.txt",
+      "premiere_ligne": 151,
+      "derniere_ligne": 300,
+      "octets": 5854,
+      "sha256": "b6b30816aae65a79746be1a27c2f467d219a50b165c9eaff9ba106e566de2f0b"
+    },
+    {
+      "fichier": "part_0003.txt",
+      "premiere_ligne": 301,
+      "derniere_ligne": 450,
+      "octets": 7411,
+      "sha256": "9c39473392f0622f58404914af88e158f1e73220ef7c0b7dffe544dabd89f364"
+    },
+    {
+      "fichier": "part_0004.txt",
+      "premiere_ligne": 451,
+      "derniere_ligne": 600,
+      "octets": 6869,
+      "sha256": "1fd97eb63f682b392d46cb866b1a5662fe946fb919be628d7535cb813b77789a"
+    },
+    {
+      "fichier": "part_0005.txt",
+      "premiere_ligne": 601,
+      "derniere_ligne": 750,
+      "octets": 6909,
+      "sha256": "a1085887e46ee0a629e042ae6e1e6abd4d8b83db89db169dcfa466884e6bf9f3"
+    },
+    {
+      "fichier": "part_0006.txt",
+      "premiere_ligne": 751,
+      "derniere_ligne": 900,
+      "octets": 8011,
+      "sha256": "746be0367fd4a892a5239b98f6c9b677ec3f547610fae1c6390e1cc0833607a2"
+    },
+    {
+      "fichier": "part_0007.txt",
+      "premiere_ligne": 901,
+      "derniere_ligne": 1050,
+      "octets": 7486,
+      "sha256": "8b97328dac83a25f90c6452b0a244842539a7f0c20eaf7104eae9a5481a66ec5"
+    },
+    {
+      "fichier": "part_0008.txt",
+      "premiere_ligne": 1051,
+      "derniere_ligne": 1200,
+      "octets": 10034,
+      "sha256": "ba113fed415e0c619950cd8ffd0748a27dda3ced71bf754edc299eca39ab4c9f"
+    },
+    {
+      "fichier": "part_0009.txt",
+      "premiere_ligne": 1201,
+      "derniere_ligne": 1350,
+      "octets": 8362,
+      "sha256": "bdb953875832f860fdab2af4967346e8c69df5c5a1d11f969eeef1eac5743fa7"
+    },
+    {
+      "fichier": "part_0010.txt",
+      "premiere_ligne": 1351,
+      "derniere_ligne": 1500,
+      "octets": 7404,
+      "sha256": "b1643cde7c34a3801deb1e62403c3c905b032e23a58e801fba68a5ea656c2367"
+    },
+    {
+      "fichier": "part_0011.txt",
+      "premiere_ligne": 1501,
+      "derniere_ligne": 1650,
+      "octets": 8880,
+      "sha256": "f7dc0c3f118d696cd4fd6f1f066777e7a7729da62f8ad1b92797508fa8c9a2b3"
+    },
+    {
+      "fichier": "part_0012.txt",
+      "premiere_ligne": 1651,
+      "derniere_ligne": 1727,
+      "octets": 4039,
+      "sha256": "b18493d76e372c5cdc170ac9e93c987c9b6613585c9725c6cfab6a8f36bcd771"
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+                        else:
+                            compte["concordances_note"] += 1
+            g = groupes.get("SESSIONS", [])
+            if g:
+                ds = sorted(x["data"]["date"] for x in g if x["data"]["date"])
+                r[d + "_SESSIONS_NB"] = len(g)
+                r[d + "_SESSIONS_NOGO"] = sum(1 for x in g if x["data"]["res"] == "NOGO")
+                r[d + "_SESSIONS_PREMIERE"] = ds[0] if ds else None
+                r[d + "_SESSIONS_DERNIERE"] = ds[-1] if ds else None
+                tracer(l, d + "_SESSIONS_NB", len(g), g, "SESSIONS_DE_LA_PERIODE")
+                compte["valeurs_ajoutees_SESSIONS"] += 1
+            g = groupes.get("ASTRAL", [])
+            if g:
+                val, ok = unique([x["rem"] for x in g])
+                r[d + "_ASTRAL_REMEDIALS"] = val if val is not None else "PLUSIEURS_VALEURS"
+                tracer(l, d + "_ASTRAL_REMEDIALS", r[d + "_ASTRAL_REMEDIALS"], g,
+                       "COMPTEUR_ASTRAL_EXPLICITEMENT_SOURCE")
+                if val is not None and val > 0:
+                    r[d + "_ASTRAL_PRESENCE_REMEDIAL"] = "OUI"
+                    tracer(l, d + "_ASTRAL_PRESENCE_REMEDIAL", "OUI", g,
+                           "MENTION_EXPLICITE_REMEDIAL_SOURCE")
+                compte["valeurs_ajoutees_ASTRAL"] += 1
+            if groupes:
+                r[d + "_ETAT_SOURCES"] = "; ".join(etat) if etat else "SOURCES:" + "+".join(sorted(groupes))
+        sortie_lignes.append(r)
+
+    # ------------------------------------------------ KLIF (une fois par dossier, derniere periode)
+    dernieres = {}
+    for r, l in zip(sortie_lignes, lignes):
+        if l["dossier"] not in dernieres or l["ordre"] >= dernieres[l["dossier"]][1]["ordre"]:
+            dernieres[l["dossier"]] = (r, l)
+    for did, (r, l) in dernieres.items():
+        cands = par_dossier_klif.get(did, [])
+        for rr, ll in zip(sortie_lignes, lignes):
+            if ll["dossier"] == did and ll is not l:
+                rr["KLIF_PORTEE"] = "VOIR_PERIODE_%s" % l["ordre"]
+        if not cands:
+            r["KLIF_PORTEE"] = "AUCUNE_LIGNE_KLIF_RACCORDEE"
+            continue
+        if len(cands) > 1:
+            affectes = [c for c in cands if not vide(c[0]["data"]["affectation"])]
+            signature = {tuple(propre(c[0]["data"][k]) for k in ("affectation", "date_affectation", "date_mu_1"))
+                         for c in affectes}
+            if len(signature) == 1:
+                cands = [affectes[0]]
+            elif not affectes:
+                cands = [cands[-1]]
+            else:
+                r["KLIF_PORTEE"] = "PLUSIEURS_LIGNES_KLIF_DIVERGENTES"
+                signaler("KLIF_PLUSIEURS_LIGNES_DIVERGENTES", (did,), cands[0][0], dossiers[did])
+                continue
+        o, st = cands[0]
+        r["KLIF_PORTEE"] = "SUIVI_KLIF_DU_DOSSIER"
+        r["KLIF_LIEN"] = st
+        r["KLIF_FEUILLE"] = o["feuille"]
+        for col, k in KLIF_BRUT.items():
+            r[col] = o["data"][k]
+        calc, alertes = interpreter_klif(o["data"])
+        r.update(calc)
+        r["KLIF_ALERTES"] = "; ".join(alertes)
+        tracer(l, "KLIF_*", o["data"]["affectation"], [o], "KLIF_" + st)
+        for col in ("KLIF_ORIGINE", "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS"):
+            if not vide(r[col]):
+                tracer(l, col, r[col], [o], "VALEUR_SOURCE_KLIF_NON_SUBSTITUEE")
+        compte["dossiers_avec_suivi_klif"] += 1
+        compte["issue_" + calc["KLIF_ISSUE_AFFECTATION_1"]] += 1
+
+    # ------------------------------------------------ ecriture
+    horo = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    local = sortie / "LOCAL"
+    part = sortie / "PARTAGEABLE"
+    local.mkdir(exist_ok=True)
+    part.mkdir(exist_ok=True)
+    fichier = local / ("PARCOURS_CONSOLIDES_%s.xlsx" % horo)
+    n = 2
+    while fichier.exists():
+        fichier = local / ("PARCOURS_CONSOLIDES_%s_%d.xlsx" % (horo, n))
+        n += 1
+    journal("Ecriture du fichier consolide...")
+    journal("Inventaire independant et controle de couverture des sources...")
+    controle = couverture.construire(
+        reef_path, sources, observations_lues, rattachements_couverture, provenance,
+        sortie_lignes, entetes, {k: globals()[k] for k in
+            ("norm", "promo", "degree_de", "degree_entete_astral", "role_de", "promotion_avant_12a",
+             "famille_explicitement_exclue", "est_moyenne_klif", "sha", "note", "nombre",
+             "resultat", "date", "FEUILLES_IGNOREES")})
+    ecrire_classeur(fichier, colonnes, entetes, ajout, sortie_lignes, provenance, examiner, corresp, reef_path,
+                    sources, lecture, controle)
+    journal("Verification des cellules du fichier Excel enregistre...")
+    verification = verifier_classeur(fichier, colonnes, sortie_lignes, entetes, len(provenance))
+    verification.update(verifier_tracabilite(fichier, provenance, examiner))
+    bilan_couverture = controle.verifier(fichier)
+    journal("Couverture : %s ; exploitation : %s." %
+            (bilan_couverture["collecte"], bilan_couverture["exploitation"]))
+    for src, n in verification["cellules_non_vides_par_source"].items():
+        journal("%s : %d cellules non vides relues dans le fichier Excel." % (src, n))
+    ecrire_decisions(sortie, m.propositions, anciennes)
+    for p, h in empreintes.items():
+        if sha(p) != h:
+            raise Erreur("Une source a change pendant le traitement : " + Path(p).name)
+    couverts = defaultdict(set)
+    for (did, ordre, dg), os_ in par_periode.items():
+        for o in os_:
+            couverts[o["source"]].add(did)
+    for did in par_dossier_klif:
+        couverts["KLIF"].add(did)
+    bilan = {
+        "version": VERSION, "revision": REVISION, "execution": "TERMINEE",
+        "fichier_cible": fichier.name, "empreinte_sha256_fichier": sha(fichier),
+        "reef_rebuild_modifie": False, "sources_inchangees": True,
+        "dossiers_reef": nb_dossiers_reef, "lignes_periodes_reef": nb_lignes_reef,
+        "dossiers_consolides": len(dossiers), "lignes_periodes": len(lignes), "population_ouverte": population, "separation_niveaux": dict(bilan_niveaux),
+        "lecture": {k: dict(v) for k, v in lecture.items()},
+        "statuts_rapprochement": {k: dict(v) for k, v in statuts.items()},
+        "dossiers_enrichis_par_source": {k: len(v) for k, v in sorted(couverts.items())},
+        "valeurs_restituees": dict(compte),
+        "points_a_examiner_par_cause": dict(Counter(g["cause"] for g in examiner.values())),
+        "propositions_de_correspondance": len(m.propositions),
+        "decisions_lues": len(decisions),
+        "decisions_oui_lues": sum(v[0] == "OUI" for v in decisions.values()),
+        "decisions_non_lues": sum(v[0] == "NON" for v in decisions.values()),
+        "decisions_appliquees": len(m.decisions_utilisees),
+        "decisions_sans_observation_retrouvee": len(decisions) - len(m.decisions_utilisees),
+        "verification_fichier_enregistre": verification,
+        "couverture_donnees": bilan_couverture,
+        "regles": ["REEF_REBUILD_LU_SEULEMENT", "KLIF_FEUILLES_ANTERIEURES_12A_IGNOREES",
+                   "AUCUNE_VALEUR_REEF_ECRASEE", "PROPOSITIONS_UTILISEES_APRES_DECISION_OUI",
+                   "VALEUR_VIDE_NON_CONVERTIE_EN_ECHEC", "PLUSIEURS_PASSAGES_NON_FUSIONNES",
+                   "KLIF_UNE_FOIS_PAR_DOSSIER_SUR_SA_DERNIERE_PERIODE",
+                   "PROMOTIONS_P_EXCLUES_NOTES_SESSIONS_KLIF", "AVANT_12A_EXCLU_KLIF_SEULEMENT",
+                   "ASTRAL_PRESENCE_EXPLICITE", "NOTE_RECONSTITUEE_DISTINCTE",
+                   "KLIF_DUREE_ENAC_EXCLUS_SOURCE"]}
+    (part / ("BILAN_CONSOLIDATION_%s.json" % horo)).write_text(json.dumps(bilan, ensure_ascii=False, indent=2),
+                                                                encoding="utf-8")
+    ecrire_registre_population(sortie, registre)
+    journal("Termine : %s" % fichier)
+    return fichier, bilan
+
+
+def verifier_classeur(fichier, colonnes, attendues, entetes_reef, nb_provenance):
+    """Relit le fichier produit, compare chaque cellule et compte les ajouts reels."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    from itertools import zip_longest
+    from math import isclose
+
+    def source_colonne(c):
+        if c in entetes_reef:
+            return None
+        for src, marqueur in (("PARCOURS", "_PARCOURS_"), ("NOTES", "_SOCRATES_"),

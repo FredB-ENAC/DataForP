@@ -1,0 +1,150 @@
+                etiquette = bool(re.match(r"^(ENAC|ENAC\s*/.*|[A-Za-z]{2,12}\s*/\s*[A-Za-z0-9]{2,8})$", label, re.I))
+                donnees = {m: cell(r, m) for m in col if cell(r, m)}
+                if label and not etiquette and len(cle_nom(label).split()) >= 2:
+                    terminer()
+                    courant = obs("ASTRAL", chemin, ws.title, i + 1, label, cle_nom(label), ws.title, None,
+                                  remedials=Counter())
+                elif label and not etiquette:
+                    terminer()
+                    courant = None
+                if courant is not None and donnees:
+                    for m, v in donnees.items():
+                        q = RE_REM.match(v)
+                        if q:
+                            courant["data"]["remedials"][m] += int(q.group(1))
+            else:
+                terminer()
+    finally:
+        wb.close()
+    return out
+
+
+KLIF_LIBELLES = {
+    "promo": "promo", "datedentreealenac": "date_entree", "nomdustagiaire": "nom",
+    "prenomdustagiaire": "prenom", "affectation": "affectation", "zone": "zone",
+    "datedaffectation": "date_affectation", "dateobtentiondelamuzz": "date_mu",
+    "arretformation": "arret", "nouveaucentre": "nouveau_centre", "datedarrivee": "date_arrivee",
+    "nombredechecs": "nb_echecs", "datedefindeformation": "date_fin",
+    "modederecrutement": "recrutement", "origine": "origine",
+    "nombredemoisdequalificationenacexclus": "duree_enac_exclus"}
+EPISODE_2 = {"date_mu", "arret", "nb_echecs", "date_fin", "date_arrivee"}
+
+
+def lire_klif(chemin, lecture):
+    out = []
+    wb = charger(chemin)
+    try:
+        for ws in wb.worksheets:
+            fam, code = promo(ws.title)
+            if fam == "ICNA_P":
+                lecture["KLIF"]["feuilles_voie_p_exclues"] += 1
+                continue
+            o = ordre_promo(code[:3] if code else None) if fam in ("ICNA_LETTRE", "ICNA_P") else None
+            if o is None:
+                lecture["KLIF"]["feuilles_non_promotion"] += 1
+                continue
+            if o < PROMO_MIN_KLIF:
+                lecture["KLIF"]["feuilles_anterieures_12A_ignorees"] += 1
+                continue
+            rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+            k = next((i for i, r in enumerate(rows[:6]) if any(norm(v) == "promo" for v in r if v is not None)), None)
+            if k is None:
+                lecture["KLIF"]["feuilles_sans_en_tete"] += 1
+                continue
+            lecture["KLIF"]["feuilles_lues"] += 1
+            roles = [KLIF_LIBELLES.get(norm(v)) if not vide(v) else None for v in rows[k]]
+            inc = roles.index("nouveau_centre") if "nouveau_centre" in roles else None
+            carte = {}
+            for j, r in enumerate(roles):
+                if r is None:
+                    continue
+                ep = 2 if inc is not None and j > inc and r in EPISODE_2 else 1
+                carte.setdefault((r, ep), j)
+            for i in range(k + 1, len(rows)):
+                row = rows[i]
+                g = lambda r, ep=1: row[carte[(r, ep)]] if (r, ep) in carte and carte[(r, ep)] < len(row) else None
+                moyenne = any(est_moyenne_klif(x) for x in row)
+                if moyenne and vide(g("nom")) and vide(g("prenom")):
+                    lecture["KLIF"]["lignes_moyenne_ignorees"] += 1
+                    continue
+                if vide(g("nom")) and vide(g("prenom")):
+                    if any(not vide(x) for x in row):
+                        lecture["KLIF"]["lignes_sans_identite"] += 1
+                    continue
+                v = {"date_entree": g("date_entree"), "affectation": g("affectation"), "zone": g("zone"),
+                     "origine": g("origine"), "duree_enac_exclus_brute": g("duree_enac_exclus"),
+                     "date_affectation": g("date_affectation"), "date_mu_1": g("date_mu"), "arret_1": g("arret"),
+                     "nouveau_centre": g("nouveau_centre"), "date_arrivee_2": g("date_arrivee", 2),
+                     "date_mu_2": g("date_mu", 2), "arret_2": g("arret", 2),
+                     "nb_echecs": g("nb_echecs") if g("nb_echecs") is not None else g("nb_echecs", 2),
+                     "date_fin": g("date_fin") if g("date_fin") is not None else g("date_fin", 2),
+                     "conflit_moyenne_identite": moyenne}
+                out.append(obs("KLIF", chemin, ws.title, i + 1, "%s %s" % (propre(g("nom")), propre(g("prenom"))),
+                               cle_nom(g("nom"), g("prenom")), ws.title, None, identite_nom=propre(g("nom")), identite_prenom=propre(g("prenom")), **v))
+    finally:
+        wb.close()
+    return out
+
+
+# ---------------------------------------------------------------- KLIF : interpretation
+MOTIFS_SORTIE = ("deced", "inapt", "demission", "abandon", "licenci", "radiation", "radie", "reform")
+
+
+def categorie_arret(v):
+    if vide(v):
+        return None
+    x = nombre(v)
+    if x is not None:
+        return "COMPTEUR_%d" % int(x) if x > 0 else "NON"
+    s = norm(v)
+    if s == "oui":
+        return "OUI"
+    if s == "non":
+        return "NON"
+    if s == "dispo":
+        return "DISPO"
+    if any(c in s for c in ("ieeac", "tseeac", "iessa")):
+        return "AUTRE_CURSUS"
+    if any(m in s for m in MOTIFS_SORTIE):
+        return "SORTIE"
+    return "AUTRE"
+
+
+def interpreter_klif(d):
+    alertes = []
+    entree, daff, mu1 = date(d["date_entree"]), date(d["date_affectation"]), date(d["date_mu_1"])
+    darr, mu2 = date(d["date_arrivee_2"]), date(d["date_mu_2"])
+    a1, a2 = categorie_arret(d["arret_1"]), categorie_arret(d["arret_2"])
+    texte_sortie = any(isinstance(d[c], str) and any(m in norm(d[c]) for m in MOTIFS_SORTIE)
+                       for c in ("affectation", "date_mu_1"))
+    m1 = mois(daff, mu1)
+    if m1 is not None and m1 < 0:
+        alertes.append("MU_1_AVANT_AFFECTATION")
+        m1 = None
+    m2 = mois(darr, mu2)
+    if m2 is not None and m2 < 0:
+        alertes.append("MU_2_AVANT_ARRIVEE")
+        m2 = None
+    mu_finale = mu2 or mu1
+    mt = mois(entree, mu_finale)
+    if mt is not None and mt < 0:
+        alertes.append("MU_AVANT_ENTREE_ENAC")
+        mt = None
+    if mu1:
+        issue = "QUALIFIEE"
+        if a1 and (a1 == "OUI" or a1.startswith("COMPTEUR")):
+            alertes.append("MU_1_ET_ARRET_1_RENSEIGNES")
+    elif a1 == "OUI" or (a1 or "").startswith("COMPTEUR"):
+        issue = "ECHEC_ARRET_DE_FORMATION"
+    elif a1 == "SORTIE" or texte_sortie:
+        issue = "SORTIE"
+    elif a1 == "AUTRE_CURSUS":
+        issue = "AUTRE_CURSUS"
+    elif a1 == "DISPO":
+        issue = "DISPONIBILITE"
+    elif not vide(d["affectation"]):
+        issue = "NON_QUALIFIEE_A_LA_DATE_DU_FICHIER"
+    else:
+        issue = "NON_DETERMINEE"
+    if not vide(d["nouveau_centre"]) and issue == "QUALIFIEE":
+        alertes.append("NOUVEAU_CENTRE_APRES_QUALIFICATION")

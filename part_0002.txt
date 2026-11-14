@@ -1,0 +1,150 @@
+        r = {"CO": "PL", "CR": "AP"}.get(r, r)
+    if r and degree and r not in ROLES[degree]:
+        return None
+    return r
+
+
+def nombre(v):
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(propre(v).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def note(v):
+    x = nombre(v)
+    return x if x is not None and 0 <= x <= 20 else None
+
+
+def resultat(v):
+    s = norm(v)
+    return {"go": "GO", "nogo": "NOGO", "ok": "GO", "ko": "NOGO", "admis": "GO",
+            "ajourne": "NOGO"}.get(s)
+
+
+def date(v):
+    if isinstance(v, dt.datetime):
+        return v
+    if isinstance(v, dt.date):
+        return dt.datetime(v.year, v.month, v.day)
+    if isinstance(v, str):
+        for f in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return dt.datetime.strptime(v.strip(), f)
+            except ValueError:
+                pass
+    return None
+
+
+def mois(d1, d2):
+    if d1 is None or d2 is None:
+        return None
+    return round((d2 - d1).days / 30.4375, 1)
+
+
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def dossier_synchronise(p):
+    p = str(Path(p).resolve()).lower()
+    for n in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial", "Dropbox"):
+        q = os.environ.get(n)
+        if q and p.startswith(str(Path(q).resolve()).lower()):
+            return True
+    return "onedrive" in p or "dropbox" in p
+
+
+def charger(p):
+    from openpyxl import load_workbook
+    return load_workbook(p, read_only=True, data_only=True)
+
+
+# ---------------------------------------------------------------- REEF_rebuild
+def lire_reef(chemin):
+    wb = charger(chemin)
+    try:
+        autorisees = [w for w in wb.worksheets if w.title.upper() not in FEUILLES_IGNOREES["REEF"]]
+        ws = next((w for w in autorisees if norm(w.title) == "reefrebuild"),
+                  autorisees[0] if autorisees else None)
+        if ws is None:
+            raise Erreur("REEF_REBUILD : aucune feuille de donnees hors feuilles ignorees.")
+        it = ws.iter_rows(values_only=True)
+        entetes = [propre(h) for h in next(it, ())]
+        while entetes and not entetes[-1]:
+            entetes.pop()
+        manquants = [c for c in REEF_REQUIS if c not in entetes]
+        if manquants:
+            raise Erreur("REEF_REBUILD : colonnes absentes " + ", ".join(manquants))
+        lignes = []
+        for no, row in enumerate(it, 2):
+            row = list(row)[:len(entetes)] + [None] * max(0, len(entetes) - len(row))
+            if not any(not vide(x) for x in row):
+                continue
+            lignes.append({"_ligne": no, "valeurs": OrderedDict(zip(entetes, row))})
+    finally:
+        wb.close()
+    dossiers = OrderedDict()
+    for l in lignes:
+        v = l["valeurs"]
+        did = propre(v["ID_DOSSIER_LOCAL"])
+        d = dossiers.setdefault(did, {"id": did, "nom": v["NOM"], "prenom": v["PRENOM"],
+                                      "cle": cle_nom(v["NOM"], v["PRENOM"]), "periodes": []})
+        try:
+            ordre = int(nombre(v["ORDRE_PERIODE"]))
+        except (TypeError, ValueError):
+            ordre = len(d["periodes"]) + 1
+        d["periodes"].append({"ordre": ordre, "promo": promo(v["PROMOTION"])[1], "ligne": l})
+        l["dossier"], l["ordre"] = did, ordre
+    for d in dossiers.values():
+        d["periodes"].sort(key=lambda p: p["ordre"])
+        d["promos"] = {p["promo"] for p in d["periodes"] if p["promo"]}
+    return ws.title, entetes, lignes, dossiers
+
+
+# ---------------------------------------------------------------- sources
+def obs(source, fichier, feuille, ligne, nom_brut, cle, promo_brute, degree=None, **data):
+    fam, code = promo(promo_brute)
+    return {"source": source, "fichier": Path(fichier).name, "feuille": feuille, "ligne": ligne,
+            "nom_brut": nom_brut, "cle": cle, "promo_brute": promo_brute, "famille": fam,
+            "promo": code, "degree": degree, "data": data}
+
+
+def lire_parcours(chemin, lecture):
+    alias = {"nom": "nom", "prenom": "prenom", "promotion": "promo", "promo": "promo",
+             "degre": "degree", "degree": "degree", "position1": "role1", "role1": "role1",
+             "noteposition1": "note1", "note1": "note1", "resultat1": "res1", "rattrapage1": "ratt1",
+             "position2": "role2", "role2": "role2", "noteposition2": "note2", "note2": "note2",
+             "resultat2": "res2", "rattrapage2": "ratt2", "note": "note", "noteglobale": "note",
+              "resultat": "res", "resultatglobal": "res",
+              "notereconstituee": "note_reconst", "originenotereconstituee": "origine_reconst",
+              "statutnotereconstituee": "statut_reconst", "traitementposition2": "traitement2",
+              "position2interpretee": "position2_interpretee"}
+    out = []
+    wb = charger(chemin)
+    try:
+        for ws in wb.worksheets:
+            rows = ws.iter_rows(values_only=True)
+            h = next(rows, ())
+            carte = {}
+            for j, x in enumerate(h):
+                k = alias.get(norm(x))
+                if k and k not in carte:
+                    carte[k] = j
+            if not {"nom", "prenom", "promo", "degree"} <= set(carte):
+                lecture["PARCOURS"]["feuilles_non_utilisees"] += 1
+                continue
+            lecture["PARCOURS"]["feuilles_lues"] += 1
+            nh = {norm(x) for x in h}
+            niveau = ("DETAIL_EVALUATION" if norm(ws.title) == "detailseval" or
+                      {"simulation", "role"} <= nh else
+                      "SYNTHESE_PARCOURS" if norm(ws.title) == "parcours" or "role1" in carte else
+                      "NIVEAU_INDETERMINE")

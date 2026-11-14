@@ -1,0 +1,77 @@
+                if k in var:
+                    var[k].set(v)
+        except Exception:
+            pass
+    for i, (k, lib) in enumerate(champs.items()):
+        tk.Label(root, text=lib, anchor="w", width=42).grid(row=i, column=0, sticky="w", padx=6, pady=2)
+        tk.Entry(root, textvariable=var[k], width=70).grid(row=i, column=1, padx=4)
+
+        def choisir(k=k):
+            p = filedialog.askdirectory() if k == "SORTIE" else filedialog.askopenfilename(
+                filetypes=[("Excel", "*.xlsx *.xlsm")])
+            if p:
+                var[k].set(p)
+        tk.Button(root, text="Choisir...", command=choisir).grid(row=i, column=2, padx=4)
+    log = scrolledtext.ScrolledText(root, width=110, height=14)
+    log.grid(row=len(champs) + 1, column=0, columnspan=3, padx=6, pady=6)
+
+    def ecrire(t):
+        root.after(0, lambda: (log.insert("end", t + "\n"), log.see("end")))
+
+    def lancer():
+        v = {k: var[k].get().strip() for k in champs}
+        if not v["REEF"] or not v["SORTIE"]:
+            messagebox.showerror("Manquant", "Choisissez REEF_REBUILD.xlsx et le dossier de resultats.")
+            return
+        if any(dossier_synchronise(x) for x in v.values() if x) and not messagebox.askyesno(
+                "Dossier synchronise", "Un emplacement semble synchronise (OneDrive/Dropbox). Le fichier produit est "
+                "nominatif et serait synchronise. Continuer quand meme ?"):
+            return
+        cfg.write_text(json.dumps(v, ensure_ascii=False), encoding="utf-8")
+
+        def travail():
+            try:
+                f, b = consolider(v["REEF"], {k: v[k] for k in ("PARCOURS", "NOTES", "SESSIONS", "ASTRAL", "KLIF")},
+                                  v["SORTIE"], ecrire)
+                ecrire(json.dumps(b["dossiers_enrichis_par_source"], ensure_ascii=False))
+                resume = "\n".join("%s : %d cellules non vides" % (src, n) for src, n in
+                                  b["verification_fichier_enregistre"]["cellules_non_vides_par_source"].items())
+                message = ("Fichier produit et relu :\n%s\n\n%s\n\nDecisions lues : %d ; appliquees : %d.\n"
+                           "Ouvrez ce nouveau fichier dans LOCAL (les anciens ne sont pas actualises).") % (
+                               f, resume, b["decisions_lues"], b["decisions_appliquees"])
+                message += ("\n\nCouverture : %s\nExploitation : %s\n"
+                            "Voir les feuilles COUVERTURE_* et le bilan PARTAGEABLE.") % (
+                                b["couverture_donnees"]["collecte"], b["couverture_donnees"]["exploitation"])
+                root.after(0, lambda message=message: messagebox.showinfo("Termine", message))
+            except Exception as e:
+                ecrire("ERREUR : %s" % e)
+                root.after(0, lambda e=e: messagebox.showerror("Erreur", str(e)))
+        threading.Thread(target=travail, daemon=True).start()
+    tk.Button(root, text="Produire le fichier consolide", command=lancer, bg="#DDEBF7").grid(
+        row=len(champs), column=1, pady=6)
+    root.mainloop()
+
+
+def main():
+    a = argparse.ArgumentParser()
+    a.add_argument("--autotest", action="store_true")
+    for k in ("reef", "parcours", "notes", "sessions", "astral", "klif", "sortie"):
+        a.add_argument("--" + k)
+    x = a.parse_args()
+    if x.autotest:
+        import test_consolidation, test_separation, test_couverture, test_lot_c1_c8
+        historique = test_consolidation.main()
+        separation = test_separation.main()
+        couverture = test_couverture.main()
+        lot_c1_c8 = test_lot_c1_c8.main()
+        sys.exit(0 if all(x == 0 for x in (historique, separation, couverture, lot_c1_c8)) else 1)
+    if x.reef and x.sortie:
+        f, b = consolider(x.reef, {"PARCOURS": x.parcours, "NOTES": x.notes, "SESSIONS": x.sessions,
+                                    "ASTRAL": x.astral, "KLIF": x.klif}, x.sortie)
+        print(json.dumps(b, ensure_ascii=False, indent=2))
+        return
+    interface()
+
+
+if __name__ == "__main__":
+    main()

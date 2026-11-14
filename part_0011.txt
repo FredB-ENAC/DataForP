@@ -1,0 +1,150 @@
+    for r in lignes:
+        ws.append([valeur(r[c]) for c in colonnes])
+    for j, c in enumerate(colonnes, 1):
+        if c in ajout:
+            ws.column_dimensions[get_column_letter(j)].outlineLevel = 1
+        if isinstance(lignes[0].get(c) if lignes else None, dt.datetime) or "DATE" in c or "PREMIERE" in c or "DERNIERE" in c:
+            for row in ws.iter_rows(min_row=2, min_col=j, max_col=j):
+                if isinstance(row[0].value, dt.datetime):
+                    row[0].number_format = "DD/MM/YYYY"
+    ws.freeze_panes = "G2"
+    ws.auto_filter.ref = ws.dimensions
+    p = wb.create_sheet("PROVENANCE")
+    p.append(["ID_DOSSIER_LOCAL", "ORDRE_PERIODE", "COLONNE", "VALEUR", "SOURCE", "REPERES (fichier!feuille:ligne)", "REGLE"] + COLONNES_TRACABILITE)
+    for x in provenance:
+        p.append([valeur_provenance(y) for y in x])
+    e = wb.create_sheet("A_EXAMINER")
+    e.append(["CAUSE", "ID_DOSSIER_LOCAL", "NOM_REEF", "PRENOM_REEF", "NOM_SOURCE", "PROMO_SOURCE",
+              "SOURCES", "DEGREES", "OBSERVATIONS", "REPERES", "AIDE", "ID_CAS", "ORDRE_PERIODE",
+              "CHAMP", "ROLE", "VALEUR_CANDIDATE", "NIVEAU", "ORIGINE_HISTORIQUE", "FEUILLE_HISTORIQUE", "LIGNE_HISTORIQUE"])
+    for g in examiner.values():
+        d = g["dossier"]
+        candidats = g.get("candidats") or [(g["o"], None)]
+        for o, val in candidats:
+            brut = {norm(k): v for k, v in o["data"].get("observation_brute", {}).items()}
+            ref = "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"])
+            e.append([g["cause"], d["id"] if d else "", d["nom"] if d else "", d["prenom"] if d else "",
+                      o["nom_brut"], o["promo_brute"], ", ".join(sorted(g["sources"])),
+                      ", ".join(sorted(g["degrees"])), len(candidats) if g.get("candidats") else g["n"],
+                      ref if g.get("candidats") else " ; ".join(g["reperes"]), g.get("raison", ""),
+                      g.get("cas", ""), g.get("periode"), g.get("champ", ""), g.get("role", ""), val,
+                      o["data"].get("niveau", "SOURCE_" + o["source"]), brut.get("source"),
+                      brut.get("feuillesource"), brut.get("lignesource")])
+    c = wb.create_sheet("CORRESPONDANCES")
+    c.append(["SOURCE", "NOM_SOURCE", "PROMO_SOURCE", "STATUT", "ID_DOSSIER_LOCAL", "NOM_REEF", "PRENOM_REEF",
+              "OBSERVATIONS"])
+    for (src, _, _), x in corresp.items():
+        d = x["dossier"]
+        c.append([src, x["o"]["nom_brut"], valeur(x["o"]["promo_brute"]), x["statut"], d["id"] if d else "",
+                  d["nom"] if d else "", d["prenom"] if d else "", x["n"]])
+    li = wb.create_sheet("LISEZMOI")
+    for t in [
+        "Fichier consolide des parcours %s (%s) - genere le %s" %
+        (VERSION, REVISION, dt.datetime.now().strftime("%d/%m/%Y %H:%M")),
+        "REEF_rebuild source (lu seulement) : %s" % Path(reef).name,
+        "Autres sources : " + ", ".join("%s=%s" % (k, Path(v).name) for k, v in sources.items() if v),
+        "",
+        "Colonnes REEF : valeurs originales preservees pour les lignes REEF ; cellules non documentees vides sur les nouvelles lignes.",
+        "BASIC_TOWER = BTWR ; BASIC_ACC = BSURV. Cordon = PL pour APS1/APS2.",
+        "Resultats PL Parcours separes du resultat global ; aucun resultat deduit d'une note.",
+        "Syntheses Parcours seules dans les champs de synthese ; details complets dans PROVENANCE (OBSERVATION_DETAILLEE).",
+        "Passage technique et mentions de rattrapage conserves tels que fournis, sans chronologie metier deduite.",
+        "Les nouvelles periodes ont un ordre TECHNIQUE, pas une chronologie de tentatives demontree.",
+        "Une ligne issue seulement de KLIF n'etablit aucun passage de Degree.",
+        "Colonnes vertes (groupees, repliables) : complements Parcours / Notes Socrates / Sessions / ASTRAL pour la meme periode.",
+        "Colonnes bleues : suivi KLIF du dossier, affiche une seule fois, sur la derniere periode du dossier.",
+        "Une valeur n'est ajoutee que si l'eleve est retrouve ET la promotion de la donnee correspond a une seule periode.",
+        "PLUSIEURS_VALEURS : valeurs de synthese non arbitrables ; ne prouve pas plusieurs passages (voir A_EXAMINER).",
+        "ETAT_SOURCES : sources presentes, ou ecart avec la note REEF (aucune valeur REEF n'est remplacee).",
+        "ISSUE_AFFECTATION_1 : QUALIFIEE (date MU), ECHEC_ARRET_DE_FORMATION (arret declare), SORTIE, AUTRE_CURSUS,",
+        "  DISPONIBILITE, NON_QUALIFIEE_A_LA_DATE_DU_FICHIER (affecte sans MU ni arret), NON_DETERMINEE. Un vide n'est jamais un echec.",
+        "Durees en mois (jours/30,4375) recalculees a partir des dates ; une duree negative n'est pas restituee (alerte).",
+        "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS : duree SOURCE en mois, jamais remplacee par les durees recalculees.",
+        "KLIF_ORIGINE : valeur telle que fournie, sans recodage de CE / CI / promotions / corps.",
+        "ASTRAL : presence OUI seulement si mention remedial explicite ; vide ne signifie pas NON.",
+        "NOTE=NOGO : note reconstituee source conservee distinctement ; NOGO et resultats conserves.",
+        "Feuilles KLIF anterieures a 12A : non etudiees.",
+        "Les promotions P sont exclues de Notes, Sessions et KLIF, quelle que soit l'annee.",
+        "Avant 12A : seule la source KLIF est exclue automatiquement par date.",
+        "Les variantes de nom ne sont pas utilisees automatiquement : decider OUI/NON dans DECISIONS_CORRESPONDANCES.xlsx,",
+        "  puis relancer. Les decisions sont conservees quand les sources sont enrichies.",
+        "",
+        "Lecture des sources : " + json.dumps({k: dict(v) for k, v in lecture.items()}, ensure_ascii=False),
+        "FICHIER NOMINATIF : ne pas transmettre. Seul le dossier PARTAGEABLE peut l'etre."]:
+        li.append([t])
+    if controle_couverture is not None:
+        controle_couverture.ajouter_feuilles(wb)
+    wb.save(fichier)
+
+
+def ecrire_decisions(sortie, propositions, anciennes):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    p = Path(sortie) / DECISIONS_NOM
+    h = ["SOURCE", "NOM_SOURCE", "PROMO_SOURCE", "CLE_SOURCE", "ID_DOSSIER_LOCAL", "NOM_REEF", "PRENOM_REEF",
+         "PROMOTIONS_REEF", "CLE_REEF", "MOTIF", "OBSERVATIONS", "DECISION"]
+    vus, lignes = set(), []
+    for v in anciennes:
+        k = (propre(v.get("SOURCE")), propre(v.get("CLE_SOURCE")), propre(v.get("PROMO_SOURCE")),
+             propre(v.get("ID_DOSSIER_LOCAL")))
+        if k not in vus:
+            vus.add(k)
+            lignes.append([v.get(x) for x in h])
+    for k, x in propositions.items():
+        if k in vus:
+            continue
+        d, o = x["dossier"], x["o"]
+        lignes.append([k[0], o["nom_brut"], k[2], k[1], d["id"], d["nom"], d["prenom"],
+                       ", ".join(p_["promo"] or "" for p_ in d["periodes"]), d["cle"], x["motif"], x["obs"], ""])
+    backup = None
+    if p.exists():
+        backup = p.with_name("DECISIONS_CORRESPONDANCES_sauvegarde_%s.xlsx"
+                             % dt.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        try:
+            shutil.copy2(p, backup)
+        except PermissionError:
+            raise Erreur("Fermez DECISIONS_CORRESPONDANCES.xlsx dans Excel, puis relancez.")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "DECISIONS"
+    ws.append(h)
+    for j in range(1, len(h) + 1):
+        ws.cell(1, j).font = Font(bold=True)
+    ws.cell(1, len(h)).fill = PatternFill("solid", fgColor="FFF2CC")
+    for l in lignes:
+        ws.append([valeur(x) for x in l])
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    try:
+        wb.save(p)
+    except PermissionError:
+        if backup is not None:
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+        raise Erreur("Fermez DECISIONS_CORRESPONDANCES.xlsx dans Excel, puis relancez.")
+
+
+def valeur(v):
+    if isinstance(v, (Counter, set, dict, list)):
+        return str(v)
+    return v
+
+
+# ---------------------------------------------------------------- interface
+def interface():
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, scrolledtext
+    import threading
+    root = tk.Tk()
+    root.title("Fichier consolide des parcours %s" % VERSION)
+    champs = OrderedDict([("REEF", "REEF_REBUILD.xlsx (obligatoire, lu seulement)"),
+                          ("PARCOURS", "Parcours agreges"), ("NOTES", "Export Notes Socrates"),
+                          ("SESSIONS", "Export Sessions Socrates"), ("ASTRAL", "Export ASTRAL"),
+                          ("KLIF", "KLIF ICNA"), ("SORTIE", "Dossier de resultats")])
+    var = {k: tk.StringVar() for k in champs}
+    cfg = Path(__file__).with_name("derniers_choix.json")
+    if cfg.exists():
+        try:
+            for k, v in json.loads(cfg.read_text(encoding="utf-8")).items():

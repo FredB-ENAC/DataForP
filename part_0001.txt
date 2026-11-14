@@ -1,0 +1,150 @@
+# -*- coding: utf-8 -*-
+"""FICHIER CONSOLIDE DES PARCOURS - version 1.0
+
+Produit un NOUVEAU classeur, tres proche de REEF_REBUILD.xlsx :
+  - une ligne par dossier et periode, toutes les colonnes REEF_rebuild conservees telles quelles ;
+  - apres chaque Degree, les valeurs complementaires de Parcours, Notes, Sessions et ASTRAL ;
+  - a droite, le suivi KLIF du dossier : affectation, MU, durees, issue de la premiere affectation,
+    second centre.
+REEF_rebuild et les autres sources sont lus uniquement (empreinte verifiee avant/apres).
+Les correspondances proposees (variantes de nom) ne sont utilisees qu'apres decision OUI dans
+DECISIONS_CORRESPONDANCES.xlsx ; ces decisions sont conservees d'une execution a l'autre.
+Usage : double-clic sur LANCER_WINDOWS.bat | python consolidation.py --autotest
+"""
+import argparse, datetime as dt, difflib, hashlib, json, os, re, shutil, sys, unicodedata, uuid
+from collections import Counter, defaultdict, OrderedDict
+from pathlib import Path
+
+VERSION = "1.0"
+REVISION = "2026-11-13-lot-c1-c8-r1-provenance"
+DEGREES = ("BTWR", "BSURV", "ADI", "APS1", "APS2", "ACS1", "ACS2")
+ROLES = {"BTWR": ("TWR",), "BSURV": ("CO", "CR"), "ADI": ("LOC",), "APS1": ("PL", "AP"),
+         "APS2": ("PL", "AP"), "ACS1": ("CO", "CR"), "ACS2": ("CO", "CR")}
+PROMO_MIN_KLIF = (2012, "A")          # feuilles KLIF anterieures a 12A : non etudiees
+REEF_REQUIS = ("ID_DOSSIER_LOCAL", "NOM", "PRENOM", "ORDRE_PERIODE", "PROMOTION")
+DECISIONS_NOM = "DECISIONS_CORRESPONDANCES.xlsx"
+FEUILLES_IGNOREES = {
+    "REEF": frozenset(("REPRISES_A_PRECISER", "LIRE_MOI", "_META_LOCAL")),
+    "NOTES": frozenset(("AUDIT_DEGREES",)),
+}
+DOSSIERS_18A_C4 = frozenset(("Dd43dd2048f958378", "D4d8e8aa756149655"))
+FAMILLES_HORS_CIBLE = frozenset(("ICNA_P", "TSEEAC", "DEF", "EXPORT"))
+
+
+class Erreur(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- utilitaires
+def sans_accent(s):
+    s = unicodedata.normalize("NFKD", str(s))
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def norm(v):
+    return re.sub(r"[^a-z0-9]", "", sans_accent("" if v is None else v).lower())
+
+
+def vide(v):
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def propre(v):
+    return "" if v is None else re.sub(r"\s+", " ", str(v).replace("\xa0", " ")).strip()
+
+
+def cle_nom(*valeurs):
+    """Nom + prenom -> jetons tries (accents, casse, traits d'union, ordre nom/prenom)."""
+    t = []
+    for v in valeurs:
+        if vide(v):
+            continue
+        t += [x for x in re.split(r"[^a-z0-9]+", sans_accent(v).lower()) if x]
+    return " ".join(sorted(t))
+
+
+def promo(brut):
+    """(famille, code) : ICNA_LETTRE '22C', ICNA_P '22P', TSEEAC, DEF, EXPORT, AUTRE, ABSENTE."""
+    if vide(brut):
+        return "ABSENTE", None
+    t = re.sub(r"\s+", "", str(brut)).upper()
+    t = re.sub(r"[-_]?BIS$", "", t)
+    if t.startswith("DEF"):
+        return "DEF", t
+    if t.startswith("ATCO"):
+        return "EXPORT", t
+    m = re.fullmatch(r"(MCTA|ICNA)?(\d{2})([A-Z])", t)
+    if m:
+        code = m.group(2) + m.group(3)
+        return ("ICNA_P" if m.group(3) == "P" else "ICNA_LETTRE"), code
+    m = re.fullmatch(r"(GSEA|FCTLA|SARA)(\d{2})([A-Z])", t)
+    if m:
+        return "TSEEAC", t
+    return "AUTRE", t
+
+
+def ordre_promo(code):
+    m = re.fullmatch(r"(\d{2})([A-Z])", code or "")
+    if not m:
+        return None
+    an = int(m.group(1))
+    # Annees historiques : 50-99 = 1950-1999 ; 00-49 = 2000-2049.
+    return (1900 + an if an >= 50 else 2000 + an, m.group(2))
+
+
+def promotion_avant_12a(brut):
+    famille, code = promo(brut)
+    ordre = ordre_promo(code) if famille in ("ICNA_LETTRE", "ICNA_P") else None
+    return ordre is not None and ordre < PROMO_MIN_KLIF
+
+
+def ecarter_anciennes_periodes_registre(registre):
+    """Mise a l'ecart reversible, sans renumerotation des periodes conservees."""
+    exclus = registre.setdefault("hors_perimetre_avant_12A", {"dossiers": {}, "periodes": {}})
+    nd = np = 0
+    for did, periodes in list(registre["periodes"].items()):
+        for pr in list(periodes):
+            if promotion_avant_12a(pr):
+                exclus["periodes"].setdefault(did, {})[pr] = periodes.pop(pr)
+                np += 1
+        if not periodes:
+            del registre["periodes"][did]
+    for did in list(registre["dossiers"]):
+        if not registre["periodes"].get(did) and did in exclus["periodes"]:
+            exclus["dossiers"][did] = registre["dossiers"].pop(did)
+            nd += 1
+    return {"dossiers_mis_a_ecart_avant_12A": nd, "periodes_mises_a_ecart_avant_12A": np}
+
+
+def degree_de(texte):
+    t = sans_accent(texte or "").upper()
+    m = re.search(r"(?<![A-Z0-9])(BASIC[ _-]*TOWER|BASIC[ _-]*ACC|BTWR|BSURV|ADI|APS1|APS2|ACS1|ACS2)(?=$|[^A-Z0-9])", t)
+    if not m:
+        return None
+    return {"BASICTOWER": "BTWR", "BASICACC": "BSURV"}.get(norm(m.group(1)).upper(), m.group(1))
+
+
+def degree_entete_astral(valeur):
+    """Seuls les en-tetes Degree exacts comptent ; ABES_ADI n'est pas ADI."""
+    t = propre(valeur).upper().replace(" ", "")
+    if t.startswith("ABES_"):
+        return None
+    return {"BASIC_TOWER": "BTWR", "BASIC_ACC": "BSURV"}.get(t, t if t in DEGREES else None)
+
+
+def famille_explicitement_exclue(brut):
+    return promo(brut)[0] in FAMILLES_HORS_CIBLE
+
+
+def est_moyenne_klif(valeur):
+    """C3 : egalite stricte apres normalisation de la casse et des espaces seulement."""
+    return isinstance(valeur, str) and "".join(valeur.split()).casefold() == "moyenne"
+
+
+def role_de(degree, brut):
+    s = norm(brut)
+    table = {"co": "CO", "pc": "CO", "organique": "CO", "cr": "CR", "rc": "CR", "radariste": "CR",
+             "pl": "PL", "planner": "PL", "cordon": "PL", "ap": "AP", "app": "AP", "approche": "AP",
+             "twr": "TWR", "tour": "TWR", "loc": "LOC", "local": "LOC"}
+    r = table.get(s)
+    if r and degree and degree.startswith("APS"):
