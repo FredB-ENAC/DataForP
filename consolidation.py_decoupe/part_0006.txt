@@ -1,0 +1,150 @@
+            if (t < u or u < t) and len(t & u) >= 2:
+                res.append((d, "NOM_COMPOSE_OU_PARTIEL"))
+            elif difflib.SequenceMatcher(None, o["cle"], d["cle"]).ratio() >= 0.88:
+                res.append((d, "ORTHOGRAPHE_PROCHE"))
+        return res[:3]
+
+    def _proposer(self, o, d, motif):
+        k = (o["source"], o["cle"], o["promo"] or "", d["id"])
+        p = self.propositions.setdefault(k, {"obs": 0, "motif": motif, "dossier": d, "o": o})
+        p["obs"] += 1
+
+    @staticmethod
+    def periode(d, o):
+        if (d and d.get("id") in DOSSIERS_18A_C4 and o.get("source") == "PARCOURS"
+                and o.get("degree") in ("ACS1", "ACS2")):
+            brut = norm(o["promo_brute"])
+            cible = (1 if brut == "mcta18a" else
+                     2 if brut == "mcta18abis" and o["degree"] == "ACS2" else None)
+            if cible is not None:
+                candidates = [p for p in d["periodes"] if p["ordre"] == cible and p["promo"] == "18A"]
+                if len(candidates) == 1:
+                    return candidates[0], "PERIODE_C4_18A_EXPLICITE"
+                return None, "PERIODE_C4_ABSENTE" if not candidates else "PERIODE_C4_AMBIGUE"
+        ps = [p for p in d["periodes"] if p["promo"] == o["promo"]]
+        if len(ps) == 1:
+            return ps[0], "PERIODE_UNIQUE"
+        if len(ps) > 1:
+            return None, "PERIODE_AMBIGUE"
+        return None, "PERIODE_SANS_VIS_A_VIS"
+
+
+
+REGISTRE_POPULATION = "REGISTRE_POPULATION_LOCAL.json"
+COLONNES_POPULATION = ("ORIGINE_LIGNE_CONSOLIDEE", "NATURE_ORDRE_PERIODE")
+
+def lire_registre_population(sortie):
+    p = Path(sortie) / REGISTRE_POPULATION
+    if not p.exists():
+        return {"version": 1, "dossiers": {}, "periodes": {}}
+    registre = json.loads(p.read_text(encoding="utf-8"))
+    if registre.get("version") != 1 or not isinstance(registre.get("dossiers"), dict) or not isinstance(registre.get("periodes"), dict):
+        raise Erreur("Registre de population incompatible : conserver le fichier et verifier sa version.")
+    return registre
+
+def ecrire_registre_population(sortie, registre):
+    p = Path(sortie) / REGISTRE_POPULATION
+    if p.exists():
+        shutil.copy2(p, p.with_name("REGISTRE_POPULATION_sauvegarde_%s.json" % dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")))
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(registre, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, p)
+
+def etendre_population(entetes, lignes, dossiers, observations, decisions, registre):
+    """Ajouts issus des sources, sans changer une ligne ni une periode REEF."""
+    ids_reef = set(dossiers)
+    cles_reef = {d["cle"] for d in dossiers.values()}
+    archive = registre.get("hors_perimetre_avant_12A", {})
+    anciens = {did: saved.get("cle") for did, saved in {**registre.get("dossiers", {}),
+                **archive.get("dossiers", {})}.items()}
+    deja_ecartes = {(anciens.get(did), pr) for did, ps in archive.get("periodes", {}).items()
+                    for pr in ps}
+    nouveaux = periodes_nouvelles = 0
+    def nouvelle_ligne(d, pr, ordre, origine, nature):
+        v = OrderedDict((c, None) for c in entetes)
+        v.update(ID_DOSSIER_LOCAL=d["id"], NOM=d["nom"], PRENOM=d["prenom"], ORDRE_PERIODE=ordre, PROMOTION=pr)
+        l = {"_ligne": None, "valeurs": v, "dossier": d["id"], "ordre": ordre,
+             "_origine_population": origine, "_nature_ordre": nature}
+        lignes.append(l)
+        d["periodes"].append({"ordre": ordre, "promo": pr, "ligne": l})
+        d["promos"].add(pr)
+    # Restituer les identifiants et periodes deja attribues dans ce dossier de resultats.
+    for did, saved in registre["dossiers"].items():
+        if did in dossiers:
+            raise Erreur("Collision entre un identifiant REEF et le registre des dossiers supplementaires.")
+        if saved["cle"] in cles_reef:
+            raise Erreur("Un dossier supplementaire est maintenant aussi present dans REEF : correspondance a verifier avant migration du registre.")
+        dossiers[did] = {"id": did, "nom": saved["nom"], "prenom": saved["prenom"], "cle": saved["cle"],
+                         "periodes": [], "promos": set(), "_hors_reef": True}
+    for did, periods in registre["periodes"].items():
+        if did not in dossiers:
+            raise Erreur("Registre : dossier de periode absent.")
+        d = dossiers[did]
+        for pr, saved in periods.items():
+            ordre = saved["ordre"]
+            if any(p["ordre"] == ordre for p in d["periodes"]):
+                raise Erreur("Registre : ordre de periode supplementaire en collision avec REEF.")
+            nouvelle_ligne(d, pr, ordre, saved["origine"], "TECHNIQUE_SANS_CHRONOLOGIE_CERTIFIEE")
+    def index_exact(cle):
+        return [d for d in dossiers.values() if d["cle"] == cle]
+    def variantes(o, rejets):
+        t = set(o["cle"].split()); out = []
+        for d in dossiers.values():
+            if d["id"] in rejets or d["cle"] == o["cle"] or not d["cle"]:
+                continue
+            u = set(d["cle"].split())
+            if ((t < u or u < t) and len(t & u) >= 2) or difflib.SequenceMatcher(None, o["cle"], d["cle"]).ratio() >= .88:
+                out.append((d["id"], "VARIANTE_AVANT_CREATION_POPULATION"))
+        return out[:3]
+    def periode_supplementaire(d, o):
+        nonlocal periodes_nouvelles
+        pr = o["promo"]
+        if any(p["promo"] == pr for p in d["periodes"]):
+            return
+        # KLIF ne prouve pas une nouvelle periode pedagogique d'un dossier REEF.
+        if o["source"] == "KLIF" and d["id"] in ids_reef:
+            return
+        ordre = max((p["ordre"] for p in d["periodes"]), default=0) + 1
+        origine = "CONTEXTE_KLIF_SANS_PASSAGE_DEGREE_DEDUIT" if o["source"] == "KLIF" else "PERIODE_DOCUMENTEE_SOURCE"
+        registre["periodes"].setdefault(d["id"], {})[pr] = {"ordre": ordre, "origine": origine}
+        nouvelle_ligne(d, pr, ordre, origine, "TECHNIQUE_SANS_CHRONOLOGIE_CERTIFIEE")
+        periodes_nouvelles += 1
+    par_cle = defaultdict(list)
+    for o in observations:
+        par_cle[o["cle"]].append(o)
+    # Ordre deterministe ; les variantes restent des propositions et ne sont jamais fusionnees.
+    ordre_cles = sorted(par_cle, key=lambda k: (-len({o["source"] for o in par_cle[k]}), -len(k.split()), k))
+    for cle in ordre_cles:
+        for o in par_cle[cle]:
+            if (o["famille"] != "ICNA_LETTRE" or not ordre_promo(o["promo"])
+                    or (o["cle"], o["promo"]) in deja_ecartes):
+                continue
+            if len(cle.split()) < 2:
+                continue
+            moteur = Moteur(dossiers, decisions)
+            accepte, rejets = moteur._decision(o)
+            exacts = [d for d in index_exact(cle) if d["id"] not in rejets]
+            avec_promo = [d for d in exacts if o["promo"] in d["promos"]]
+            if avec_promo:
+                exacts = avec_promo
+            d = accepte
+            if d is None and len(exacts) == 1:
+                d = exacts[0]
+                # Correspondance KLIF avec une autre promotion : conserver la decision requise.
+                if o["source"] == "KLIF" and d["id"] in ids_reef and o["promo"] not in d["promos"]:
+                    continue
+            if d is None and len(exacts) > 1:
+                continue
+            if d is None:
+                proches = variantes(o, rejets)
+                if proches:
+                    o["_propositions_population"] = proches
+                    continue
+                did = "N" + uuid.uuid4().hex[:20]
+                while did in dossiers:
+                    did = "N" + uuid.uuid4().hex[:20]
+                n = o["data"].get("identite_nom") or o["nom_brut"]
+                p = o["data"].get("identite_prenom") or None
+                d = {"id": did, "nom": n, "prenom": p, "cle": cle, "periodes": [], "promos": set(), "_hors_reef": True}
+                dossiers[did] = d
+                registre["dossiers"][did] = {"cle": cle, "nom": n, "prenom": p}

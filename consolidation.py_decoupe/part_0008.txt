@@ -1,0 +1,150 @@
+                "contenu_long_conserve_dans": "COUVERTURE_DONNEES",
+                "ID_LIGNE_IMPORT": couverture.identifiant_ligne(o["source"], o["feuille"], o["ligne"]),
+                "lecture": "Reunir CELLULES_SOURCE_JSON par PARTIE_JSON ; valeurs indexees par colonne source."
+            }, ensure_ascii=False)
+        return [cas, o["data"].get("niveau", "SOURCE_" + o["source"]), role or role_de(o["degree"], x.get("role", "")) or x.get("role", ""),
+                o["promo_brute"], o["degree"], x.get("resultat", ""), x.get("rattrapage", ""),
+                x.get("passage", ""), x.get("evalid", ""), x.get("roleid", ""), x.get("simulation", ""),
+                x.get("source", ""), x.get("feuillesource", ""), x.get("lignesource", ""), statut,
+                brut_json,
+                champ, valeur]
+
+    def tracer(l, col, val, liste, regle):
+        # Une ligne par observation, pas une liste tronquee de references.
+        for o in liste:
+            provenance.append([l["dossier"], l["ordre"], col, val, o["source"],
+                               "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"]), regle] + extras(o))
+
+    def conflit(l, degree, source, col, vals, groupe, cause="PLUSIEURS_VALEURS_MEME_PERIODE", contexte=None):
+        ident = "CAS_" + hashlib.sha256(json.dumps([l["dossier"], l["ordre"], degree, source, col, cause, contexte]).encode()).hexdigest()[:20]
+        role = next((rr for rr in ROLES[degree] if ("_" + rr + "_") in col), "")
+        candidats = [(o, val) for o, val in zip(groupe, vals) if val is not None]
+        raison = ("Valeurs distinctes entre observations comparables ; aucun choix automatique."
+                  if cause in ("PLUSIEURS_VALEURS_MEME_PERIODE", "DETAIL_EVALUATION_DIVERGENTE") else
+                  "La combinaison note/resultat n'est portee par aucune observation unique ; lien a etablir.")
+        signaler(cause, (ident,), groupe[0], dossiers[l["dossier"]])
+        gcase = examiner[(cause, ident)]
+        gcase.update(cas=ident, periode=l["ordre"], champ=col, role=role,
+                     candidats=candidats, raison=raison)
+        for o, val in candidats:
+            provenance.append([l["dossier"], l["ordre"], col, val, o["source"],
+                               "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"]),
+                               "CANDIDAT_NON_ARBITRE"] + extras(o, ident, role, cause, col, val))
+        compte["champs_ambigus_" + source] += 1
+
+    comparables_details = defaultdict(list)
+    for did, pd, o, statut in observations_detail:
+        x = contexte_observation(o)
+        cles = ("source", "feuillesource", "lignesource", "evalid", "roleid", "passage", "rattrapage", "simulation")
+        # Ces reperes identifient une observation technique, pas une tentative metier.
+        if did and pd and o["degree"] and o["data"].get("niveau") == "DETAIL_EVALUATION" and all(not vide(x.get(k)) for k in cles):
+            contexte = tuple(str(x[k]) for k in cles)
+            comparables_details[(did["id"], pd["ordre"], o["degree"], contexte)].append(o)
+    for (did, ordre, dg, contexte), groupe in comparables_details.items():
+        vals = [o["data"].get("res") for o in groupe]
+        if len({v for v in vals if v is not None}) > 1:
+            conflit({"dossier": did, "ordre": ordre}, dg, "PARCOURS", dg + "_DETAIL_RESULTAT", vals, groupe,
+                    "DETAIL_EVALUATION_DIVERGENTE", contexte)
+            bilan_niveaux["champs_detail_resultat_divergents"] += 1
+
+    for did, pd, o, statut in observations_detail:
+        provenance.append([did["id"] if did else "", pd["ordre"] if pd else "", "OBSERVATION_DETAILLEE",
+                           o["data"].get("res"), o["source"],
+                           "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"]),
+                           "DETAIL_CONSERVE_SANS_RESULTAT_GLOBAL_DEDUIT"] + extras(o, statut=statut))
+
+    def unique(vals):
+        s = {round(v, 2) if isinstance(v, float) else v for v in vals if v is not None}
+        return (next(iter(s)), True) if len(s) == 1 else (None, len(s) > 1)
+
+    sortie_lignes = []
+    for l in lignes:
+        v = l["valeurs"]
+        r = OrderedDict((c, v.get(c)) for c in colonnes)
+        if "ORIGINE_LIGNE_CONSOLIDEE" not in entetes:
+            r["ORIGINE_LIGNE_CONSOLIDEE"] = l.get("_origine_population", "REEF_REBUILD")
+        if "NATURE_ORDRE_PERIODE" not in entetes:
+            r["NATURE_ORDRE_PERIODE"] = l.get("_nature_ordre", "ORDRE_REEF_CONSERVE")
+        if l.get("_origine_population"):
+            justifs = [o for o in toutes if o["promo"] == promo(v.get("PROMOTION"))[1] and
+                       (o["cle"] == dossiers[l["dossier"]]["cle"] or
+                        (o["source"], o["cle"], o["promo"] or "", l["dossier"]) in decisions and
+                        decisions[(o["source"], o["cle"], o["promo"] or "", l["dossier"])][0] == "OUI")]
+            tracer(l, "ORIGINE_LIGNE_CONSOLIDEE", r["ORIGINE_LIGNE_CONSOLIDEE"], justifs,
+                   "PERIODE_SOURCE_ORDRE_TECHNIQUE_PAS_CHRONOLOGIE_DE_PASSAGES")
+        for d in DEGREES:
+            etat = []
+            os_ = par_periode.get((l["dossier"], l["ordre"], d), [])
+            groupes = defaultdict(list)
+            for o in os_:
+                groupes[o["source"]].append(o)
+            for src, cible in (("PARCOURS", "PARCOURS"), ("NOTES", "SOCRATES")):
+                g = groupes.get(src, [])
+                if src == "PARCOURS":
+                    avant = {x["data"].get("res") for x in g if x["data"].get("res") is not None}
+                    if len(avant) > 1:
+                        bilan_niveaux["champs_resultat_global_mixtes_avant"] += 1
+                    g = [x for x in g if x["data"].get("niveau") == "SYNTHESE_PARCOURS"]
+                    apres = {x["data"].get("res") for x in g if x["data"].get("res") is not None}
+                    if len(apres) > 1:
+                        bilan_niveaux["champs_resultat_global_synthese_divergents_apres"] += 1
+                    if len(avant) > 1 and len(apres) <= 1:
+                        bilan_niveaux["champs_resultat_global_separes"] += 1
+                        categorie = ("champs_resultat_global_retablis_depuis_synthese" if apres else
+                                     "champs_resultat_global_sans_resultat_synthese")
+                        bilan_niveaux[categorie] += 1
+                if not g:
+                    continue
+                champs = [(d + "_%s_NOTE" % cible, [x["data"]["note"] for x in g])]
+                if src == "PARCOURS":
+                    champs.append((d + "_PARCOURS_RESULTAT", [x["data"]["res"] for x in g]))
+                    champs.extend([
+                        (d + "_PARCOURS_NOTE_RECONSTITUEE", [x["data"].get("note_reconstituee") for x in g]),
+                        (d + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
+                         [x["data"].get("origine_note_reconstituee") or None
+                          if x["data"].get("note_reconstituee") is not None else None for x in g]),
+                        (d + "_PARCOURS_STATUT_NOTE_RECONSTITUEE",
+                         [x["data"].get("statut_note_reconstituee") or None
+                          if x["data"].get("note_reconstituee") is not None else None for x in g]),
+                    ])
+                    if d in ("APS1", "APS2"):
+                        champs.append((d + "_PL_PARCOURS_RESULTAT",
+                                       [x["data"]["roles"].get("PL", {}).get("res") for x in g]))
+                for role in ROLES[d]:
+                    vals = [x["data"]["roles"].get(role, {}).get("note") for x in g]
+                    if len(ROLES[d]) > 1:
+                        champs.append(("%s_%s_%s_NOTE" % (d, role, cible), vals))
+                    elif (all(x is None for x in champs[0][1])
+                          and not any(norm(x["data"].get("observation_brute", {}).get("Note")) == "nogo"
+                                      for x in g)):
+                        champs[0] = (champs[0][0], vals)
+                # Ne pas fabriquer une combinaison note/resultat depuis des lignes disjointes.
+                uniques = [(col, unique(vals)[0], vals) for col, vals in champs if unique(vals)[0] is not None]
+                coherent = not uniques or any(all(vals[i] is not None and unique([vals[i]])[0] == value
+                                                   for col, value, vals in uniques) for i in range(len(g)))
+                for col, vals in champs:
+                    val, ok = unique(vals)
+                    if val is not None and not coherent:
+                        r[col] = "PLUSIEURS_VALEURS"
+                        conflit(l, d, src, col, vals, g, "SYNTHESE_COMPOSITE_NON_JUSTIFIEE")
+                        etat.append(src + ":SYNTHESE_COMPOSITE_NON_JUSTIFIEE")
+                        continue
+                    if val is not None:
+                        r[col] = val
+                        tracer(l, col, val, [o for o, vv in zip(g, vals)
+                                           if vv is not None and unique([vv])[0] == val],
+                               "VALEUR_UNIQUE_DANS_LA_PERIODE")
+                        compte["valeurs_ajoutees_" + src] += 1
+                    elif ok:
+                        r[col] = "PLUSIEURS_VALEURS"
+                        etat.append("%s:VALEURS_MULTIPLES_NON_ARBITREES" % src)
+                        conflit(l, d, src, col, vals, g)
+                # comparaison avec REEF (notes par role)
+                for role in ROLES[d]:
+                    rc = d + "_NOTE" if d in ("BTWR", "ADI") else "%s_%s_NOTE" % (d, role)
+                    cc = (d + "_%s_NOTE" % cible) if d in ("BTWR", "ADI") else "%s_%s_%s_NOTE" % (d, role, cible)
+                    a, b = note(v.get(rc)), r.get(cc)
+                    if a is not None and isinstance(b, float):
+                        if abs(a - b) > 0.011:
+                            etat.append("%s:ECART_NOTE_%s" % (src, role))
+                            compte["ecarts_note"] += 1

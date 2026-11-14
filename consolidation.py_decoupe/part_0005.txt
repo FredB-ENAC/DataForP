@@ -1,0 +1,150 @@
+    if mu1 is None and not vide(d["date_mu_1"]) and not texte_sortie:
+        alertes.append("DATE_MU_1_ILLISIBLE")
+    duree_brute = d.get("duree_enac_exclus_brute")
+    duree_source = nombre(duree_brute)
+    if not vide(duree_brute):
+        if duree_source is None:
+            alertes.append("DUREE_ENAC_EXCLUS_NON_NUMERIQUE")
+        elif duree_source < 0:
+            alertes.append("DUREE_ENAC_EXCLUS_NEGATIVE")
+            duree_source = None
+    return {"KLIF_MOIS_AFFECTATION_MU_1": m1, "KLIF_ISSUE_AFFECTATION_1": issue,
+            "KLIF_MOIS_ARRIVEE_MU_2": m2, "KLIF_MOIS_ENTREE_ENAC_MU": mt,
+            "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS": duree_source,
+            "KLIF_ARRET_1_CATEGORIE": a1 or "", "KLIF_ARRET_2_CATEGORIE": a2 or ""}, alertes
+
+
+KLIF_COLONNES = ["KLIF_PORTEE", "KLIF_LIEN", "KLIF_FEUILLE", "KLIF_DATE_ENTREE_ENAC",
+                 "KLIF_ORIGINE", "KLIF_AFFECTATION_1", "KLIF_ZONE", "KLIF_DATE_AFFECTATION_1", "KLIF_DATE_MU_1",
+                 "KLIF_ARRET_1", "KLIF_ARRET_1_CATEGORIE", "KLIF_MOIS_AFFECTATION_MU_1",
+                 "KLIF_ISSUE_AFFECTATION_1", "KLIF_NOUVEAU_CENTRE", "KLIF_DATE_ARRIVEE_2", "KLIF_DATE_MU_2",
+                 "KLIF_ARRET_2", "KLIF_ARRET_2_CATEGORIE", "KLIF_MOIS_ARRIVEE_MU_2", "KLIF_NB_ECHECS",
+                 "KLIF_DATE_FIN_FORMATION", "KLIF_MOIS_ENTREE_ENAC_MU",
+                 "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS", "KLIF_DUREE_ENAC_EXCLUS_BRUTE", "KLIF_ALERTES"]
+KLIF_BRUT = {"KLIF_DATE_ENTREE_ENAC": "date_entree", "KLIF_ORIGINE": "origine",
+             "KLIF_DUREE_ENAC_EXCLUS_BRUTE": "duree_enac_exclus_brute",
+             "KLIF_AFFECTATION_1": "affectation", "KLIF_ZONE": "zone",
+             "KLIF_DATE_AFFECTATION_1": "date_affectation", "KLIF_DATE_MU_1": "date_mu_1",
+             "KLIF_ARRET_1": "arret_1", "KLIF_NOUVEAU_CENTRE": "nouveau_centre",
+             "KLIF_DATE_ARRIVEE_2": "date_arrivee_2", "KLIF_DATE_MU_2": "date_mu_2", "KLIF_ARRET_2": "arret_2",
+             "KLIF_NB_ECHECS": "nb_echecs", "KLIF_DATE_FIN_FORMATION": "date_fin"}
+
+
+def colonnes_degree(d):
+    c = [d + "_PARCOURS_RESULTAT", d + "_PARCOURS_NOTE"]
+    c += [d + "_PARCOURS_NOTE_RECONSTITUEE", d + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
+          d + "_PARCOURS_STATUT_NOTE_RECONSTITUEE"]
+    if len(ROLES[d]) > 1:
+        c += ["%s_%s_PARCOURS_NOTE" % (d, r) for r in ROLES[d]]
+    if d in ("APS1", "APS2"):
+        c += [d + "_PL_PARCOURS_RESULTAT"]
+    c += [d + "_SOCRATES_NOTE"]
+    if len(ROLES[d]) > 1:
+        c += ["%s_%s_SOCRATES_NOTE" % (d, r) for r in ROLES[d]]
+    c += [d + "_SESSIONS_NB", d + "_SESSIONS_NOGO", d + "_SESSIONS_PREMIERE", d + "_SESSIONS_DERNIERE",
+          d + "_ASTRAL_REMEDIALS", d + "_ASTRAL_PRESENCE_REMEDIAL", d + "_ETAT_SOURCES"]
+    return c
+
+
+# ---------------------------------------------------------------- decisions
+def lire_decisions(dossier_sortie):
+    p = Path(dossier_sortie) / DECISIONS_NOM
+    dec = {}
+    if not p.exists():
+        return dec, []
+    wb = charger(p)
+    lignes = []
+    try:
+        ws = wb.worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        h = [propre(x) for x in next(it, ())]
+        for row in it:
+            v = dict(zip(h, row))
+            if vide(v.get("SOURCE")):
+                continue
+            lignes.append(v)
+            d = norm(v.get("DECISION"))
+            if d in ("oui", "non"):
+                dec[(propre(v["SOURCE"]), propre(v["CLE_SOURCE"]), propre(v["PROMO_SOURCE"]),
+                     propre(v["ID_DOSSIER_LOCAL"]))] = (d.upper(), propre(v.get("CLE_REEF")))
+    finally:
+        wb.close()
+    return dec, lignes
+
+
+# ---------------------------------------------------------------- rapprochement
+class Moteur:
+    def __init__(self, dossiers, decisions):
+        self.dossiers = dossiers
+        self.decisions = decisions
+        self.decisions_utilisees = set()
+        self.par_cle = defaultdict(list)
+        for d in dossiers.values():
+            if d["cle"]:
+                self.par_cle[d["cle"]].append(d)
+        self.promos_reef = {p for d in dossiers.values() for p in d["promos"]}
+        self.propositions = {}
+
+    def _decision(self, o):
+        ok, non = None, set()
+        for (src, cle, pr, did), (dec, cle_reef) in self.decisions.items():
+            if src != o["source"] or cle != o["cle"] or pr != (o["promo"] or ""):
+                continue
+            d = self.dossiers.get(did)
+            if d is None and cle_reef:  # identifiant regenere : retrouver par la cle REEF
+                c = [x for x in self.par_cle.get(cle_reef, [])]
+                d = c[0] if len(c) == 1 else None
+            if d is None:
+                continue
+            self.decisions_utilisees.add((src, cle, pr, did))
+            if dec == "OUI":
+                ok = d
+            else:
+                non.add(d["id"])
+        return ok, non
+
+    def identifier(self, o):
+        """-> (dossier ou None, statut)"""
+        if not o["cle"] or len(o["cle"].split()) < 2:
+            return None, "IDENTITE_INSUFFISANTE"
+        valide, rejets = self._decision(o)
+        if valide:
+            return valide, "DECISION_VALIDEE"
+        if o["famille"] in ("AUTRE", "ABSENTE"):
+            return None, "PROMOTION_A_QUALIFIER"
+        if o.get("_propositions_population"):
+            for did, motif in o["_propositions_population"]:
+                if did in self.dossiers and did not in rejets:
+                    self._proposer(o, self.dossiers[did], motif)
+            return None, "PROPOSITION_A_DECIDER"
+        cands = [d for d in self.par_cle.get(o["cle"], []) if d["id"] not in rejets]
+        if cands:
+            avec_promo = [d for d in cands if o["promo"] in d["promos"]]
+            if len(avec_promo) == 1:
+                return avec_promo[0], "NOM_ET_PROMOTION"
+            if len(avec_promo) > 1:
+                return None, "HOMONYMES_MEME_PROMOTION"
+            if len(cands) == 1 and o["source"] != "KLIF":
+                return cands[0], "NOM_EXACT_PROMOTION_DIFFERENTE"
+            if len(cands) == 1:
+                self._proposer(o, cands[0], "NOM_EXACT_PROMOTION_KLIF_DIFFERENTE")
+                return None, "PROPOSITION_A_DECIDER"
+            return None, "HOMONYMES"
+        if o["famille"] in FAMILLES_HORS_CIBLE:
+            return None, "HORS_CIBLE_CURSUS_OU_VOIE"
+        if o["promo"] not in self.promos_reef:
+            return None, "PROMOTION_NON_REPRESENTEE_DANS_REEF"
+        props = self._approchants(o, rejets)
+        if props:
+            for d, motif in props:
+                self._proposer(o, d, motif)
+            return None, "PROPOSITION_A_DECIDER"
+        return None, "SANS_CANDIDAT"
+
+    def _approchants(self, o, rejets):
+        t = set(o["cle"].split())
+        res = []
+        for d in self.dossiers.values():
+            if d["id"] in rejets or o["promo"] not in d["promos"] or not d["cle"]:
+                continue
+            u = set(d["cle"].split())

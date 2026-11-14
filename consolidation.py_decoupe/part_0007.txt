@@ -1,0 +1,150 @@
+                nouveaux += 1
+            if d.get("_hors_reef") and o["data"].get("identite_nom") and o["data"].get("identite_prenom"):
+                d["nom"], d["prenom"] = o["data"]["identite_nom"], o["data"]["identite_prenom"]
+                registre["dossiers"][d["id"]].update(nom=d["nom"], prenom=d["prenom"])
+                for p in d["periodes"]:
+                    p["ligne"]["valeurs"].update(NOM=d["nom"], PRENOM=d["prenom"])
+            periode_supplementaire(d, o)
+    for d in dossiers.values():
+        d["periodes"].sort(key=lambda p:p["ordre"])
+    return {"dossiers_crees_cette_execution": nouveaux, "periodes_creees_cette_execution": periodes_nouvelles,
+            "dossiers_supplementaires_conserves": len(registre["dossiers"]),
+            "periodes_supplementaires_conservees": sum(len(v) for v in registre["periodes"].values())}
+
+
+# ---------------------------------------------------------------- consolidation
+def consolider(reef_path, sources, sortie, journal=print):
+    import couverture
+    sortie = Path(sortie)
+    sortie.mkdir(parents=True, exist_ok=True)
+    empreintes = {str(reef_path): sha(reef_path)}
+    for p in sources.values():
+        if p:
+            empreintes[str(p)] = sha(p)
+    journal("Lecture de REEF_rebuild (lecture seule)...")
+    titre, entetes, lignes, dossiers = lire_reef(reef_path)
+    lecture = defaultdict(Counter)
+    lecteurs = {"PARCOURS": lire_parcours, "NOTES": lire_notes, "SESSIONS": lire_sessions,
+                "ASTRAL": lire_astral, "KLIF": lire_klif}
+    toutes = []
+    for src, fn in lecteurs.items():
+        if sources.get(src):
+            journal("Lecture %s..." % src)
+            o = fn(sources[src], lecture)
+            lecture[src]["observations"] = len(o)
+            toutes += o
+    decisions, anciennes = lire_decisions(sortie)
+    observations_lues = list(toutes)
+    journal("Decisions lues : %d (OUI : %d, NON : %d). Fichier : %s" %
+            (len(decisions), sum(v[0] == "OUI" for v in decisions.values()),
+             sum(v[0] == "NON" for v in decisions.values()), sortie / DECISIONS_NOM))
+    nb_dossiers_reef, nb_lignes_reef = len(dossiers), len(lignes)
+    retenues = []
+    for o in toutes:
+        if o["source"] == "KLIF" and promotion_avant_12a(o["promo_brute"]):
+            lecture[o["source"]]["observations_anterieures_12A_ignorees"] += 1
+        elif o["source"] in ("NOTES", "SESSIONS", "KLIF") and famille_explicitement_exclue(o["promo_brute"]):
+            lecture[o["source"]]["observations_hors_cible_ignorees"] += 1
+        else:
+            retenues.append(o)
+    toutes = retenues
+    registre = lire_registre_population(sortie)
+    exclusions = ecarter_anciennes_periodes_registre(registre)
+    population = etendre_population(entetes, lignes, dossiers,
+                                    [o for o in toutes
+                                     if not (o["source"] == "KLIF" and o["data"].get("conflit_moyenne_identite"))
+                                     and (o["source"] != "PARCOURS" or
+                                          o["data"].get("niveau") == "SYNTHESE_PARCOURS")],
+                                    decisions, registre)
+    population.update(exclusions)
+    m = Moteur(dossiers, decisions)
+    journal("Rapprochement des eleves...")
+    statuts = defaultdict(Counter)
+    examiner = OrderedDict()
+    corresp = OrderedDict()
+    par_periode = defaultdict(list)       # (dossier, ordre, degree) -> obs
+    par_dossier_klif = defaultdict(list)
+    observations_detail = []
+    bilan_niveaux = Counter()
+    rattachements_couverture = {}
+
+    def signaler(cause, cle, o, dossier=None):
+        g = examiner.setdefault((cause,) + cle, {"cause": cause, "dossier": dossier, "o": o, "n": 0,
+                                                 "sources": set(), "degrees": set(), "reperes": []})
+        g["n"] += 1
+        g["sources"].add(o["source"])
+        if o["degree"]:
+            g["degrees"].add(o["degree"])
+        if True:
+            g["reperes"].append("%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"]))
+
+    for o in toutes:
+        if o["source"] == "KLIF" and o["data"].get("conflit_moyenne_identite"):
+            rattachements_couverture[id(o)] = {
+                "dossier": "", "ordre": "", "statut": "KLIF_MOYENNE_AVEC_IDENTITE"}
+            statuts["KLIF"]["KLIF_MOYENNE_AVEC_IDENTITE"] += 1
+            signaler("KLIF_MOYENNE_AVEC_IDENTITE", (o["feuille"], o["ligne"]), o)
+            continue
+        d, st = m.identifier(o)
+        lien_couverture = {"dossier": d["id"] if d else "", "ordre": "", "statut": st}
+        rattachements_couverture[id(o)] = lien_couverture
+        statuts[o["source"]][st] += 1
+        ck = (o["source"], o["cle"], o["promo"] or "")
+        c = corresp.setdefault(ck, {"o": o, "statut": st, "dossier": d, "n": 0})
+        c["n"] += 1
+        if o["source"] == "PARCOURS" and o["data"].get("niveau") != "SYNTHESE_PARCOURS":
+            pd, std = m.periode(d, o) if d else (None, st)
+            observations_detail.append((d, pd, o, std))
+            bilan_niveaux["observations_" + o["data"].get("niveau", "NIVEAU_INDETERMINE")] += 1
+            bilan_niveaux["observations_hors_synthese_rattachees" if pd else
+                          "observations_hors_synthese_rattachement_non_resolu"] += 1
+        if d is None:
+            if st in ("HOMONYMES", "HOMONYMES_MEME_PROMOTION", "SANS_CANDIDAT"):
+                signaler(st, ck, o)
+            elif st == "IDENTITE_INSUFFISANTE" and o["source"] != "KLIF":
+                signaler(st, (o["source"], o["feuille"]), o)
+            continue
+        if o["source"] == "KLIF":
+            lien_couverture["ordre"] = max(p["ordre"] for p in d["periodes"])
+            par_dossier_klif[d["id"]].append((o, st))
+            continue
+        p, stp = m.periode(d, o)
+        statuts[o["source"]][stp] += 1
+        if p is None:
+            signaler(stp, (d["id"], o["source"]), o, d)
+            continue
+        lien_couverture.update(ordre=p["ordre"], statut=stp)
+        if o["degree"]:
+            par_periode[(d["id"], p["ordre"], o["degree"])].append(o)
+        elif o["source"] == "ASTRAL":
+            for dg, q in o["data"]["remedials"].items():
+                par_periode[(d["id"], p["ordre"], dg)].append(dict(o, degree=dg, rem=q))
+
+    # ------------------------------------------------ colonnes de sortie
+    colonnes = []
+    ajout = {}
+    derniere = {d: max((i for i, h in enumerate(entetes) if h.startswith(d + "_")), default=None) for d in DEGREES}
+    for i, h in enumerate(entetes):
+        colonnes.append(h)
+        for d in DEGREES:
+            if derniere[d] == i:
+                colonnes += colonnes_degree(d)
+                ajout.update({c: d for c in colonnes_degree(d)})
+    for d in DEGREES:
+        if derniere[d] is None:
+            colonnes += colonnes_degree(d)
+            ajout.update({c: d for c in colonnes_degree(d)})
+    colonnes += [c for c in COLONNES_POPULATION if c not in colonnes]
+    colonnes += KLIF_COLONNES
+    provenance = []
+    compte = Counter()
+
+    def contexte_observation(o):
+        brut = o["data"].get("observation_brute", {})
+        return {norm(k): v for k, v in brut.items()}
+
+    def extras(o, cas="", role="", statut="", champ="", valeur=None):
+        x = contexte_observation(o)
+        brut_json = json.dumps(o["data"].get("observation_brute", {}), ensure_ascii=False, default=str)
+        if len(brut_json) > couverture.LIMITE_JSON:
+            brut_json = json.dumps({
