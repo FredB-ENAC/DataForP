@@ -1,0 +1,53 @@
+{
+  "version_outil": "1.0",
+  "fichier_original": "couverture.py",
+  "nombre_lignes": 869,
+  "lignes_par_partie": 150,
+  "octets_original": 51635,
+  "sha256_original": "8986e9a6d821c1bd280dedab37d73253c7e52f6faca11636141b0dc93a5cab46",
+  "reassemblage_identique": true,
+  "parties": [
+    {
+      "fichier": "part_0001.txt",
+      "premiere_ligne": 1,
+      "derniere_ligne": 150,
+      "octets": 7365,
+      "sha256": "56eeb9d2998b2495f18757bebf2a98c16d5cf04804c293723aac6d8dc17e843a"
+    },
+    {
+      "fichier": "part_0002.txt",
+      "premiere_ligne": 151,
+      "derniere_ligne": 300,
+      "octets": 8300,
+      "sha256": "42056f60a90693aac46a55cb65b05d85572ed8727e578a2c1b5be3168c11df7d"
+    },
+    {
+      "fichier": "part_0003.txt",
+      "premiere_ligne": 301,
+      "derniere_ligne": 450,
+      "octets": 9290,
+      "sha256": "0c982f578fd28f522156840febc84f9b7bca8e5e97bff6e57d6368eff81aa534"
+    },
+    {
+      "fichier": "part_0004.txt",
+      "premiere_ligne": 451,
+      "derniere_ligne": 600,
+      "octets": 9996,
+      "sha256": "0562c2ce5380de26e10b0c648edd2e4544fe89f602ab734e3f90f907de0e6398"
+    },
+    {
+      "fichier": "part_0005.txt",
+      "premiere_ligne": 601,
+      "derniere_ligne": 750,
+      "octets": 8817,
+      "sha256": "9d10dcd4d2cbc6a7bb201a005128f823ae5b673274a0146312381c8bf528993a"
+    },
+    {
+      "fichier": "part_0006.txt",
+      "premiere_ligne": 751,
+      "derniere_ligne": 869,
+      "octets": 7867,
+      "sha256": "a13d8b7cc4ab497fff752df9c60a970ff78c978a8253b576fc2adbe6272edd09"
+    }
+  ]
+}

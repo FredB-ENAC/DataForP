@@ -1,0 +1,150 @@
+                                           promo=self.r["promo"](info["feuille"])[1] or "")
+                            info["candidates"] += 1
+                            for x in suite:
+                                x.update(nature="COMPLEMENT_ASTRAL", porteur=courant["ligne"])
+                        else:
+                            courant["nature"] = "STRUCTURE_OU_TECHNIQUE"
+                            for x in suite:
+                                x["nature"] = "STRUCTURE_OU_TECHNIQUE"
+                    courant, suite, explicite = None, [], False
+
+                for rec in rows:
+                    if rec["ligne"] <= entete:
+                        continue
+                    label = str(rec["values"].get("B", "")).strip()
+                    if label.upper() == "TOTAL":
+                        terminer_bloc()
+                        rec.update(nature="EXCLUE_PAR_REGLE", exclusion="TOTAL_ASTRAL_C5")
+                        break
+                    institution = bool(re.match(r"^(ENAC|ENAC\s*/.*|[A-Za-z]{2,12}\s*/\s*[A-Za-z0-9]{2,8})$",
+                                                label, re.I))
+                    # norm() colle les mots : le nom et prenom sont delimites dans le libelle brut.
+                    identite_probable = len(re.findall(r"[A-Za-zÀ-ÿ0-9]+", label)) >= 2
+                    if label and not institution and identite_probable:
+                        terminer_bloc()
+                        courant = rec
+                    elif label and not institution:
+                        terminer_bloc()
+                        rec["nature"] = "DONNEE_ASTRAL_NON_RECONNUE"
+                    elif courant is not None:
+                        suite.append(rec)
+                    rec["porteur"] = courant["ligne"] if courant is not None else None
+                    if courant is not None:
+                        for col, val in rec["values"].items():
+                            if (self.r["degree_entete_astral"](str(headers.get(col, "")))
+                                    and re.fullmatch(r"\s*\d+\s*remedial\(s\)\s*", str(val), re.I)):
+                                explicite = True
+                terminer_bloc()
+        elif src == "KLIF":
+            fam, pr = self.r["promo"](info["feuille"])
+            if fam == "ICNA_P":
+                info.update(statut="EXCLUE_PAR_REGLE", motif="KLIF voie P exclue C2.")
+                for rec in rows:
+                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="VOIE_P_C2", promo=pr or "")
+            elif fam == "ICNA_LETTRE" and self.r["promotion_avant_12a"](info["feuille"]):
+                info.update(statut="EXCLUE_PAR_REGLE", motif="KLIF : promotion anterieure a 12A.")
+                for rec in rows:
+                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="KLIF_AVANT_12A_C2", promo=pr or "")
+            elif fam in ("TSEEAC", "DEF", "EXPORT"):
+                info.update(statut="EXCLUE_PAR_REGLE",
+                            motif="Cursus non ICNA non importe par le lecteur KLIF existant ; brut conserve.")
+                for rec in rows:
+                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="FAMILLE_HORS_CIBLE_C2", promo=pr or "")
+            else:
+                for rec in rows[:6]:
+                    if "promo" in {norm(v) for v in rec["values"].values()}:
+                        headers, entete = rec["values"], rec["ligne"]
+                        info.update(statut="LUE_SYNTHESE", motif="En-tete stagiaires KLIF.")
+                        break
+                if entete is None:
+                    info["motif"] = "Feuille KLIF sans structure interpretable ; conservation brute."
+        if headers:
+            for k, label in headers.items():
+                traitement = self.contrat(src, niveau, label, k)
+                ch = (src, info["feuille"], k, traitement)
+                self.libelles[ch] = str(label)
+                self.champs[ch]["non_vides"] += 0
+            for rec in rows:
+                if src in ("REEF", "PARCOURS", "KLIF") and entete is not None and rec["ligne"] > entete:
+                    rec.update(nature="CANDIDATE", niveau=niveau or "SOURCE_" + src)
+                    info["candidates"] += 1
+                    if src == "KLIF":
+                        identites = [v for k, v in rec["values"].items()
+                                     if norm(headers.get(k, k)) in ("nomdustagiaire", "prenomdustagiaire") and v is not None]
+                        premier = norm(rec["values"].get("A", ""))
+                        moyenne = any(self.r["est_moyenne_klif"](v) for v in rec["values"].values())
+                        if not identites and moyenne:
+                            rec.update(nature="EXCLUE_PAR_REGLE", exclusion="MOYENNE_KLIF_C3")
+                            info["candidates"] -= 1
+                        elif not identites and premier in {"total", "totalgeneral", "mediane", "ecarttype"}:
+                            rec["nature"] = "STRUCTURE_OU_TECHNIQUE"
+                            info["candidates"] -= 1
+                        elif not identites:
+                            rec["nature"] = "CONTENU_NON_RECONNU"
+                            info["candidates"] -= 1
+                        elif moyenne:
+                            rec["conflit_moyenne_identite"] = True
+                if entete is not None and rec["ligne"] <= entete:
+                    continue
+                rec["headers"] = headers
+                normal = {norm(headers.get(k, k)): v for k, v in rec["values"].items()}
+                if src in ("REEF", "PARCOURS"):
+                    rec["promo"] = self.r["promo"](normal.get("promotion", normal.get("promo")))[1] or ""
+                    rec["degree"] = self.r["degree_de"](str(normal.get("degre", normal.get("degree", "")))) or ""
+                elif src == "KLIF":
+                    rec["promo"] = self.r["promo"](info["feuille"])[1] or ""
+            if info["candidates"] == 0 and entete is not None:
+                info.update(statut="VIDE_OU_ENTETES_SEULS", motif="En-tetes sans observation.")
+        if info["statut"] == "NON_RECONNUE_A_EXAMINER":
+            for rec in rows:
+                rec["nature"] = "CONTENU_NON_RECONNU"
+
+    def calculer(self, observations, rattachements, provenance, sorties, entetes_reef):
+        norm = self.r["norm"]
+        par_ref = defaultdict(list)
+        for o in observations:
+            par_ref[(o["source"], o["feuille"], o["ligne"])].append(o)
+        traces = defaultdict(list)
+        for p in provenance:
+            traces[(p[4], p[5])].append(p)
+        self._traces_klif = {p[5] for p in provenance if p[4] == "KLIF" and p[2] == "KLIF_*"}
+        sorties_idx = {(str(r["ID_DOSSIER_LOCAL"]), r["ORDRE_PERIODE"]): r for r in sorties}
+        records = {(r["source"], r["feuille"], r["ligne"]): r for r in self.donnees}
+        for rec in self.donnees:
+            key = (rec["source"], rec["feuille"], rec["ligne"])
+            obs = par_ref.get(key, [])
+            porteur = rec.get("porteur")
+            support = records.get((rec["source"], rec["feuille"], porteur)) if porteur else None
+            if not obs and support and support is not rec:
+                obs = par_ref.get((rec["source"], rec["feuille"], porteur), [])
+            if rec["source"] == "REEF" and rec["nature"] == "CANDIDATE":
+                rec["statut"] = "RESTITUEE_EN_SYNTHESE"
+                raw = {norm(rec.get("headers", {}).get(k, k)): v for k, v in rec["values"].items()}
+                did, ordre = str(raw.get("iddossierlocal", "")), raw.get("ordreperiode")
+                rec["did"], rec["ordre"] = did, ordre
+                cible = sorties_idx.get((did, ordre), {})
+                for k, valeur in rec["values"].items():
+                    col = rec.get("headers", {}).get(k, k)
+                    if col not in cible or fige(cible[col]) != fige(valeur):
+                        rec.setdefault("champs_en_cause", []).append(str(col))
+                        self.probleme(rec, "CHAMP_UTILE_NON_RESTITUE")
+            if rec["nature"] == "CANDIDATE" and rec["source"] != "REEF":
+                rec["info"]["lues"] += len(par_ref.get(key, []))
+                if not par_ref.get(key):
+                    rec["info"]["manquantes"] += 1
+                    self.probleme(rec, "LIGNE_CANDIDATE_ABSENTE_DU_LECTEUR")
+                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
+            if rec["nature"] == "CANDIDATE" and self.r["promo"](rec["promo"])[0] in ("AUTRE", "ABSENTE"):
+                self.probleme(rec, "PROMOTION_NON_RECONNUE")
+            if rec["nature"] in ("CONTENU_NON_RECONNU", "DONNEE_ASTRAL_NON_RECONNUE"):
+                self.probleme(rec, "CONTENU_NON_RECONNU_CONSERVE")
+                rec["statut"] = "EN_ATTENTE_CONSERVEE"
+            if rec.get("conflit_moyenne_identite"):
+                self.probleme(rec, "KLIF_MOYENNE_AVEC_IDENTITE")
+                rec["statut"] = "EN_ATTENTE_CONSERVEE"
+            if rec["formules"]:
+                if any(k not in rec["values"] for k in rec["formules"]):
+                    self.probleme(rec, "FORMULE_SANS_CACHE")
+            for o in obs:
+                lien = rattachements.get(id(o), {})
+                rec["did"], rec["ordre"] = lien.get("dossier", ""), lien.get("ordre", "")

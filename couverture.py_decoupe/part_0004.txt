@@ -1,0 +1,150 @@
+                ref = "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"])
+                pp = traces.get((o["source"], ref), [])
+                rec["destinations"] += sorted({str(p[2]) for p in pp})
+                if o["source"] == "KLIF" and self.r["promotion_avant_12a"](o["promo_brute"]):
+                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                    self.probleme(rec, "EXCLUSION_AVANT_12A_KLIF")
+                elif o["source"] in ("NOTES", "SESSIONS", "KLIF") and self.r["famille_explicitement_exclue"](o["promo_brute"]):
+                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                    self.probleme(rec, "EXCLUSION_METIER_HORS_CIBLE_C2")
+                elif not lien.get("dossier") or lien.get("ordre") in (None, ""):
+                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                    self.probleme(rec, "RATTACHEMENT_EN_ATTENTE")
+                elif o["source"] == "PARCOURS" and o["data"].get("niveau") == "DETAIL_EVALUATION":
+                    # C8 : le niveau du lecteur prime sur une trace d'origine de ligne.
+                    if any(p[2] == "OBSERVATION_DETAILLEE" for p in pp):
+                        rec["statut"] = "CONSERVEE_EN_DETAIL"
+                    else:
+                        rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                        self.probleme(rec, "DETAIL_SANS_PROVENANCE")
+                elif any(p[2] != "OBSERVATION_DETAILLEE" for p in pp):
+                    rec["statut"] = "RESTITUEE_EN_SYNTHESE"
+                else:
+                    rec["statut"] = "EN_ATTENTE_CONSERVEE"
+                    self.probleme(rec, "OBSERVATION_LUE_SANS_RESTITUTION_SYNTHETIQUE")
+                if o["source"] not in ("ASTRAL", "KLIF") and not o["degree"]:
+                    self.probleme(rec, "DEGREE_NON_RECONNU")
+                if rec["nature"] == "CANDIDATE":
+                    self.controler_champs(rec, o, lien, pp, sorties_idx)
+            for k, value in rec["values"].items():
+                if rec.get("headers") and rec["nature"] != "STRUCTURE_OU_TECHNIQUE":
+                    label = rec["headers"].get(k, k)
+                    traitement = self.contrat(rec["source"], rec["niveau"], label, k)
+                    ch = (rec["source"], rec["feuille"], k, traitement)
+                    self.libelles[ch] = str(label)
+                    self.champs[ch]["non_vides"] += 1
+                    dg = ((self.r["degree_entete_astral"](str(label)) if rec["source"] == "ASTRAL"
+                           else self.r["degree_de"](str(label)))
+                          if rec["source"] in ("ASTRAL", "REEF") else rec["degree"])
+                    self.champs_degree[(rec["source"], self.promotion_agregee(rec["promo"]),
+                                        dg or "NON_PRECISE")] += 1
+                    self.champs[ch]["sans_cache"] += int(k in rec["formules"] and k not in rec["values"])
+                    self.champs[ch]["alertes"] += bool(rec["motifs"])
+                    if "NON_PREVU" in traitement:
+                        if not rec["motifs"]:
+                            self.champs[ch]["alertes"] += 1
+                        self.probleme(rec, "CHAMP_NON_PREVU_CONSERVE")
+            # Les formules sans cache ne figurent pas dans values.
+            for k in set(rec["formules"]) - set(rec["values"]):
+                label = rec.get("headers", {}).get(k, k)
+                ch = (rec["source"], rec["feuille"], k, "FORMULE_SANS_CACHE")
+                self.libelles[ch] = str(label)
+                self.champs[ch]["sans_cache"] += 1
+            self.volumes[rec["source"]]["lignes_non_vides_archivees"] += 1
+            if rec["nature"] == "CANDIDATE":
+                self.volumes[rec["source"]]["observations_candidates"] += 1
+                self.volumes[rec["source"]][rec["statut"]] += 1
+                g = (rec["source"], self.promotion_agregee(rec["promo"]), rec["degree"] or "NON_PRECISE",
+                     rec["niveau"] or "SOURCE")
+                self.groupes[g][rec["statut"]] += 1
+        for key in par_ref:
+            if key not in records:
+                self.alertes["OBSERVATION_LECTEUR_SANS_LIGNE_SOURCE"] += len(par_ref[key])
+        self.controler_sessions(records, par_ref, rattachements, sorties_idx)
+        self.controler_astral_klif(records, par_ref, rattachements, sorties_idx)
+        for v in self.champs.values():
+            v["alertes"] = 0
+        for rec in self.donnees:
+            if rec["motifs"] and rec.get("headers") and rec["nature"] != "STRUCTURE_OU_TECHNIQUE":
+                for col in rec["values"]:
+                    label = rec["headers"].get(col, col)
+                    ch = (rec["source"], rec["feuille"], col,
+                          self.contrat(rec["source"], rec["niveau"], label, col))
+                    self.champs[ch]["alertes"] += 1
+        bloquantes = sum(v for k, v in self.alertes.items() if k in (
+            "LIGNE_CANDIDATE_ABSENTE_DU_LECTEUR", "FEUILLE_NON_RECONNUE", "FORMULE_SANS_CACHE",
+            "OBSERVATION_LECTEUR_SANS_LIGNE_SOURCE", "CHAMP_UTILE_NON_RESTITUE", "DETAIL_SANS_PROVENANCE",
+            "VALEUR_NON_INTERPRETEE", "DEGREE_NON_RECONNU", "ROLE_NON_RECONNU",
+            "CHAMP_NON_PREVU_CONSERVE", "CONTENU_NON_RECONNU_CONSERVE", "PROMOTION_NON_RECONNUE",
+            "KLIF_MOYENNE_AVEC_IDENTITE"))
+        candidates = sum(v["observations_candidates"] for v in self.volumes.values())
+        classes = {st: sum(v[st] for v in self.volumes.values()) for st in ETATS}
+        if candidates != sum(classes.values()):
+            raise ValueError("Reconciliation de couverture desequilibree.")
+        conclusion = ("COUVERTURE_NON_DEMONTREE" if self.alertes["FEUILLE_NON_RECONNUE"] else
+                      "COUVERTURE_PARTIELLE_EXPLIQUEE" if bloquantes else
+                      "COUVERTURE_COMPLETE_DU_PERIMETRE_DECLARE")
+        self.bilan = {
+            "revision": REVISION, "perimetre": "FICHIERS_SELECTIONNES_DE_CETTE_EXECUTION",
+            "sources_selectionnees": sorted(self.empreintes),
+            "sources_non_selectionnees": self.sources_absentes,
+            "collecte": conclusion,
+            "restitution": conclusion,
+            "exploitation": "SOUS_RESTRICTIONS" if self.alertes else "RATTACHEMENTS_CONTROLES",
+            "inventaire_independant_du_lecteur": True,
+            "observations_candidates": candidates, "devenir_observations_candidates": classes,
+            "reconciliation_equilibree": True, "alertes_par_cause": dict(sorted(self.alertes.items())),
+            "par_source": {s: dict(c) for s, c in sorted(self.volumes.items())},
+            "exclusions_lignes_non_vides_par_source": dict(Counter(
+                r["source"] for r in self.donnees if r["nature"] == "EXCLUE_PAR_REGLE")),
+            "exclusions_par_regle": dict(sorted(Counter(
+                r.get("exclusion") for r in self.donnees if r.get("exclusion")).items())),
+            "moyennes_klif_ignorees": sum(r.get("exclusion") == "MOYENNE_KLIF_C3" for r in self.donnees),
+            "couverture_par_source_promotion_degree_niveau": [
+                {"source": s, "promotion": pr, "degree": dg, "niveau": ni, "statuts": dict(c)}
+                for (s, pr, dg, ni), c in sorted(self.groupes.items())],
+            "champs_non_vides_par_source_promotion_degree": [
+                {"source": s, "promotion": pr, "degree": dg, "cellules_sources_non_vides": n}
+                for (s, pr, dg), n in sorted(self.champs_degree.items())],
+            "limites": ["Ne certifie ni l'exhaustivite historique des sources ni l'identite des personnes.",
+                       "Les champs documentaires et identifiants non exploites restent conserves en brut.",
+                       "Les sources non selectionnees ne sont pas declarees couvertes.",
+                       "Les formules sources ne sont pas recalculees.",
+                       "Seules les mentions remedial ASTRAL explicites alimentent le compteur ; absence n'est pas NON."]}
+        if self.sources_absentes:
+            self.bilan["limites"].append("Conclusion limitee aux sources selectionnees, pas aux cinq sources potentielles.")
+        return self
+
+    def controler_champs(self, rec, o, lien, traces, sorties_idx):
+        """Contrats independants des champs de sortie, a partir des cellules brutes."""
+        norm = self.r["norm"]
+        raw = {norm(k): v for k, v in o["data"].get("observation_brute", {}).items()}
+        if rec["source"] == "PARCOURS":
+            raw = {norm(rec.get("headers", {}).get(k, k)): v for k, v in rec["values"].items()}
+        if rec["source"] not in ("PARCOURS", "NOTES", "SESSIONS"):
+            return
+        detail = rec["niveau"] == "DETAIL_EVALUATION"
+        if detail:
+            return
+        dg = rec["degree"] or o["degree"]
+        if not dg:
+            return
+        attendus = []
+        if rec["source"] == "PARCOURS":
+            for champ in ("note", "noteglobale"):
+                if champ in raw:
+                    x = self.r["note"](raw[champ])
+                    if norm(raw[champ]) == "nogo":
+                        raw_reconst = raw.get("notereconstituee")
+                        nr = self.r["note"](raw_reconst)
+                        if nr is not None:
+                            attendus.append((dg + "_PARCOURS_NOTE_RECONSTITUEE", nr))
+                            if raw.get("originenotereconstituee"):
+                                attendus.append((dg + "_PARCOURS_ORIGINE_NOTE_RECONSTITUEE",
+                                                raw["originenotereconstituee"]))
+                            if raw.get("statutnotereconstituee"):
+                                attendus.append((dg + "_PARCOURS_STATUT_NOTE_RECONSTITUEE",
+                                                raw["statutnotereconstituee"]))
+                        elif raw_reconst not in (None, ""):
+                            self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                    elif x is None and raw[champ] not in (None, ""):

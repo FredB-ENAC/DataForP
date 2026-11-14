@@ -1,0 +1,150 @@
+                        self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                    elif x is not None:
+                        attendus.append((dg + "_PARCOURS_NOTE", x))
+                    break
+            res = raw.get("resultat", raw.get("resultatglobal"))
+            if res is not None and res != "":
+                attendus.append((dg + "_PARCOURS_RESULTAT", self.r["resultat"](res) or str(res).strip()))
+            for i in ("1", "2"):
+                trait = norm(raw.get("traitementposition2", "")) + " " + norm(raw.get("position2interpretee", ""))
+                if i == "2" and any(t in trait for t in ("neutralis", "ignore", "nonretenu")):
+                    continue  # neutralisation explicite source, non suppression de l'observation
+                pos = raw.get("position" + i, raw.get("role" + i))
+                n = raw.get("noteposition" + i, raw.get("note" + i))
+                res = raw.get("resultat" + i)
+                role = self.r["role_de"](dg, pos)
+                if role is None and dg in ("BTWR", "ADI") and i == "1" and n is not None:
+                    role = "TWR" if dg == "BTWR" else "LOC"
+                if pos is not None and role is None and (n is not None or res is not None):
+                    self.probleme(rec, "ROLE_NON_RECONNU")
+                if n is not None and self.r["note"](n) is None:
+                    self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                if role and self.r["note"](n) is not None:
+                    if dg not in ("BTWR", "ADI"):
+                        attendus.append(("%s_%s_PARCOURS_NOTE" % (dg, role), self.r["note"](n)))
+                    elif raw.get("note", raw.get("noteglobale")) is None:
+                        attendus.append((dg + "_PARCOURS_NOTE", self.r["note"](n)))
+                if role == "PL" and res is not None and res != "":
+                    attendus.append((dg + "_PL_PARCOURS_RESULTAT",
+                                     self.r["resultat"](res) or str(res).strip()))
+        elif rec["source"] == "NOTES":
+            v = rec["values"]
+            if "G" in v:
+                n = self.r["note"](v["G"])
+                if n is None:
+                    self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                else:
+                    attendus.append((dg + "_SOCRATES_NOTE", n))
+            for k in ("E", "F"):
+                if k not in v:
+                    continue
+                m = re.match(r"^\s*([A-Za-z]+)\s*:\s*(-?[\d.,]+)\s*$", str(v[k]))
+                if not m and str(v[k]).strip():
+                    self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                if m:
+                    role = self.r["role_de"](dg, m[1])
+                    n = self.r["note"](m[2])
+                    if not role:
+                        self.probleme(rec, "ROLE_NON_RECONNU")
+                    if n is None:
+                        self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                    if role and n is not None:
+                        col = dg + "_SOCRATES_NOTE" if dg in ("BTWR", "ADI") else "%s_%s_SOCRATES_NOTE" % (dg, role)
+                        if dg not in ("BTWR", "ADI") or "G" not in v:
+                            attendus.append((col, n))
+        if not lien.get("dossier") or lien.get("ordre") in (None, ""):
+            return
+        sortie = sorties_idx.get((str(lien["dossier"]), lien["ordre"]), {})
+        for col, valeur in attendus:
+            matches = [t for t in traces if t[2] == col and egal(t[3], valeur)]
+            # Les candidats d'un conflit sont une restitution valide de l'incertitude.
+            if not matches or col not in sortie or (
+                    not egal(sortie[col], valeur) and sortie[col] != "PLUSIEURS_VALEURS"):
+                rec.setdefault("champs_en_cause", []).append(col)
+                self.probleme(rec, "CHAMP_UTILE_NON_RESTITUE")
+
+    def controler_sessions(self, records, par_ref, liens, sorties):
+        groupes = defaultdict(list)
+        for key, oo in par_ref.items():
+            if key[0] != "SESSIONS" or key not in records:
+                continue
+            rec = records[key]
+            for o in oo:
+                lien = liens.get(id(o), {})
+                if lien.get("dossier") and lien.get("ordre") not in (None, "") and o["degree"]:
+                    groupes[(str(lien["dossier"]), lien["ordre"], o["degree"])].append((rec, o))
+        for (did, ordre, dg), items in groupes.items():
+            dates, nogo = [], 0
+            for rec, o in items:
+                rawdate = rec["values"].get("D")
+                date = self.r["date"](rawdate)
+                if date is None and isinstance(rawdate, (int, float)):
+                    from openpyxl.utils.datetime import from_excel
+                    try:
+                        date = from_excel(rawdate)
+                    except (ValueError, OverflowError, TypeError):
+                        pass
+                if rawdate is not None and not isinstance(date, dt.datetime):
+                    self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                elif date is not None:
+                    dates.append(date)
+                rawres = rec["values"].get("F")
+                if rawres is not None and self.r["resultat"](rawres) is None:
+                    self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                nogo += self.r["resultat"](rawres) == "NOGO"
+            expected = {dg + "_SESSIONS_NB": len(items), dg + "_SESSIONS_NOGO": nogo,
+                        dg + "_SESSIONS_PREMIERE": min(dates) if dates else None,
+                        dg + "_SESSIONS_DERNIERE": max(dates) if dates else None}
+            mauvais = [c for c, val in expected.items()
+                       if not egal(sorties.get((did, ordre), {}).get(c), val)]
+            if mauvais:
+                for rec, _ in items:
+                    rec.setdefault("champs_en_cause", []).extend(mauvais)
+                    self.probleme(rec, "CHAMP_UTILE_NON_RESTITUE")
+
+    def controler_astral_klif(self, records, par_ref, liens, sorties):
+        """Controle les agregats ASTRAL et les valeurs KLIF depuis les cellules archivees."""
+        norm = self.r["norm"]
+        complements = defaultdict(list)
+        for r in self.donnees:
+            if r["source"] == "ASTRAL" and r.get("porteur") != r["ligne"]:
+                complements[(r["feuille"], r.get("porteur"))].append(r)
+        for key, oo in par_ref.items():
+            if key[0] not in ("ASTRAL", "KLIF") or key not in records:
+                continue
+            rec = records[key]
+            for o in oo:
+                lien = liens.get(id(o), {})
+                if not lien.get("dossier") or lien.get("ordre") in (None, ""):
+                    continue
+                did, ordre = str(lien["dossier"]), lien["ordre"]
+                cible = sorties.get((did, ordre), {})
+                expected = {}
+                if key[0] == "ASTRAL":
+                    counts = Counter()
+                    parties = [rec] + complements[(rec["feuille"], rec["ligne"])]
+                    for r in parties:
+                        for col, v in r["values"].items():
+                            if col in ("A", "B"):
+                                continue
+                            titre = str(rec.get("headers", {}).get(col, ""))
+                            dg = self.r["degree_entete_astral"](titre)
+                            match = re.fullmatch(r"\s*(\d+)\s*remedial\(s\)\s*", str(v), re.I)
+                            if dg and match:
+                                counts[dg] += int(match[1])
+                            elif dg and not re.fullmatch(r"\s*\d{1,3}\s*%\s*done\s*", str(v), re.I):
+                                self.probleme(r, "VALEUR_NON_INTERPRETEE")
+                            elif not dg and titre and not norm(titre).startswith("abes"):
+                                self.probleme(r, "DEGREE_NON_RECONNU")
+                    expected = {dg + "_ASTRAL_REMEDIALS": n for dg, n in counts.items()}
+                    expected.update({dg + "_ASTRAL_PRESENCE_REMEDIAL": "OUI"
+                                     for dg, n in counts.items() if n > 0})
+                else:
+                    if cible.get("KLIF_PORTEE") != "SUIVI_KLIF_DU_DOSSIER":
+                        continue  # les divergences sont conservees brutes, sans nouveau choix
+                    # Une autre ligne KLIF a pu etre retenue par la regle historique.
+                    repere = "%s!%s:%s" % (o["fichier"], o["feuille"], o["ligne"])
+                    if repere not in self._traces_klif:
+                        continue
+                    mapping = {"datedentreealenac": "KLIF_DATE_ENTREE_ENAC", "affectation": "KLIF_AFFECTATION_1",
+                               "zone": "KLIF_ZONE", "datedaffectation": "KLIF_DATE_AFFECTATION_1",

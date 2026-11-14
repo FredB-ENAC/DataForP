@@ -1,0 +1,119 @@
+                               "origine": "KLIF_ORIGINE",
+                               "nouveaucentre": "KLIF_NOUVEAU_CENTRE", "datedarrivee": "KLIF_DATE_ARRIVEE_2",
+                               "nombredechecs": "KLIF_NB_ECHECS", "datedefindeformation": "KLIF_DATE_FIN_FORMATION"}
+                    episode = 1
+                    for col, label in rec.get("headers", {}).items():
+                        n = norm(label)
+                        if n == "nouveaucentre":
+                            episode = 2
+                        ciblecol = mapping.get(n)
+                        if n == "dateobtentiondelamuzz":
+                            ciblecol = "KLIF_DATE_MU_" + str(episode)
+                        if n == "arretformation":
+                            ciblecol = "KLIF_ARRET_" + str(episode)
+                        if n == "nombredemoisdequalificationenacexclus" and col in rec["values"]:
+                            expected["KLIF_DUREE_ENAC_EXCLUS_BRUTE"] = rec["values"][col]
+                            nb = self.r["nombre"](rec["values"][col])
+                            if nb is not None and nb >= 0:
+                                expected["KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS"] = nb
+                            elif rec["values"][col] not in (None, ""):
+                                self.probleme(rec, "VALEUR_NON_INTERPRETEE")
+                        if ciblecol and col in rec["values"]:
+                            expected[ciblecol] = rec["values"][col]
+                    dernier = max(p for d, p in sorties if d == did)
+                    if ordre != dernier or any(r.get("KLIF_PORTEE") == "SUIVI_KLIF_DU_DOSSIER" and p != ordre
+                                              for (d, p), r in sorties.items() if d == did):
+                        self.probleme(rec, "CHAMP_UTILE_NON_RESTITUE")
+                mauvais = [col for col, v in expected.items()
+                           if col not in cible or (not egal(cible[col], v) and cible[col] != "PLUSIEURS_VALEURS")]
+                if mauvais:
+                    rec.setdefault("champs_en_cause", []).extend(mauvais)
+                    self.probleme(rec, "CHAMP_UTILE_NON_RESTITUE")
+
+    def tables(self):
+        if hasattr(self, "_tables"):
+            return self._tables
+        feuilles = [[s["source"], s["fichier"], s["feuille"], s["statut"], s["motif"],
+                     s["lignes_examinees"], s["non_vides"], s["candidates"], s["lues"],
+                     s["manquantes"], s["sans_cache"]] for s in self.feuilles]
+        donnees = []
+        for r in self.donnees:
+            ident = identifiant_ligne(r["source"], r["feuille"], r["ligne"])
+            payload = serie({"valeurs": r["values"], "formules": r["formules"]})
+            parts = [payload[i:i + LIMITE_JSON] for i in range(0, len(payload), LIMITE_JSON)] or [""]
+            for i, chunk in enumerate(parts, 1):
+                donnees.append([ident, r["source"], r["fichier"], r["feuille"], r["ligne"], r["nature"],
+                                r["statut"], "; ".join(r["motifs"]), r["promo"], r["degree"],
+                                r["did"], r["ordre"], serie(sorted(set(r["destinations"]))),
+                                serie(sorted(set(r.get("champs_en_cause", [])))),
+                                i, len(parts), chunk])
+        champs = [[s, f, col, self.libelles[key], traitement,
+                   *self.description_champ(s, self.libelles[key], traitement),
+                   v["non_vides"], v["sans_cache"], v["alertes"]]
+                  for key, v in sorted(self.champs.items())
+                  for s, f, col, traitement in [key]]
+        self._tables = {"COUVERTURE_FEUILLES": (H_FEUILLES, feuilles),
+                        "COUVERTURE_DONNEES": (H_DONNEES, donnees),
+                        "COUVERTURE_CHAMPS": (H_CHAMPS, champs)}
+        return self._tables
+
+    def ajouter_feuilles(self, wb):
+        from openpyxl.styles import Font
+        for name, (head, rows) in self.tables().items():
+            ws = wb.create_sheet(name)
+            ws.append(head)
+            for c in ws[1]:
+                c.font = Font(bold=True)
+            for row in rows:
+                ws.append(row)
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+            from openpyxl.utils import get_column_letter
+            for j, label in enumerate(head, 1):
+                ws.column_dimensions[get_column_letter(j)].width = min(46, max(16, len(label) + 2))
+        for src, empreinte in sorted(self.empreintes.items()):
+            wb["LISEZMOI"].append(["EMPREINTE SOURCE " + src, empreinte])
+        li = wb["LISEZMOI"]
+        li.append(["CONTROLE DE COUVERTURE : " + self.bilan["collecte"]])
+        li.append(["Les 3 feuilles COUVERTURE_* sont locales et nominatives. Donnees brutes conservees, pas seulement les observations acceptees par le lecteur."])
+        li.append(["COUVERTURE_DONNEES : une ligne par ligne source non vide ; JSON long reparti en parties ordonnees a reunir par ID_LIGNE_IMPORT."])
+        li.append(["Les identifiants L_ reperent une ligne dans cette execution ; ils ne sont ni une identite d'eleve ni un identifiant stable apres deplacement des lignes sources."])
+        li.append(["Le contrat BRUT_DOCUMENTE ne signifie pas qu'un champ alimente une colonne metier ; voir COUVERTURE_CHAMPS."])
+        li.append(["Les motifs et CHAMPS_EN_CAUSE de COUVERTURE_DONNEES donnent les anomalies exactes ; OBSERVATIONS_AVEC_ALERTE porte sur la ligne source, pas uniquement ce champ."])
+        li.append(["Alias conserves : BASIC_TOWER=BTWR, BASIC_ACC=BSURV ; Cordon/Planner=PL, Approche=AP ; CO/CR selon le Degree. EleveId/id_Aurion conserves, sans nouvelle cle universelle."])
+        li.append(["C2 : l'exclusion par date avant 12A s'applique a KLIF seulement ; les anciennes exclusions du registre restent archivees."])
+        li.append(["C2 : promotions P exclues de KLIF, Notes et Sessions sans ajout de population."])
+        li.append(["C3 : les lignes Moyenne KLIF sont ignorees par contenu si l'identite est vide ; conflit avec identite conserve a examiner."])
+        li.append(["C8 : les details restent classes en detail, meme avec une trace supplementaire d'origine de population."])
+        li.append(["Le bilan agrege distingue collecte, restitution et exploitation. Une ambiguite conservee n'est pas une perte."])
+
+    def verifier(self, fichier):
+        from openpyxl import load_workbook
+        wb = load_workbook(fichier, read_only=True, data_only=False)
+        total = 0
+        try:
+            for name, (head, rows) in self.tables().items():
+                it = wb[name].iter_rows(values_only=True)
+                if list(next(it, ())) != head:
+                    raise ValueError("Entetes de couverture incorrectes : " + name)
+                for no, (got, exp) in enumerate(zip_longest(it, rows), 2):
+                    if got is None or exp is None or len(got) != len(exp) or any(
+                            fige(a) != fige(b) for a, b in zip(got, exp)):
+                        raise ValueError("Conservation de couverture incorrecte : %s ligne %d." % (name, no))
+                    total += 1
+        finally:
+            wb.close()
+        self.bilan["conservation_brute_verifiee_apres_sauvegarde"] = True
+        self.bilan["lignes_de_controle_verifiees"] = total
+        return self.bilan
+
+
+def construire(reef, sources, observations, rattachements, provenance, sorties, entetes, regles):
+    controle = ControleCouverture(regles)
+    controle.inventorier("REEF", reef)
+    for src in ("PARCOURS", "NOTES", "SESSIONS", "ASTRAL", "KLIF"):
+        if sources.get(src):
+            controle.inventorier(src, sources[src])
+        else:
+            controle.sources_absentes.append(src)
+    return controle.calculer(observations, rattachements, provenance, sorties, entetes)

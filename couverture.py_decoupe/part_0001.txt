@@ -1,0 +1,150 @@
+# -*- coding: utf-8 -*-
+"""Controle de couverture local. Ne modifie ni les sources ni les regles metier."""
+import datetime as dt
+import hashlib
+import json
+import re
+from collections import Counter, defaultdict
+from itertools import zip_longest
+from pathlib import Path
+
+REVISION = "2026-11-13-lot-c1-c8"
+LIMITE_JSON = 14000  # au plus 28000 unites UTF-16, meme avec caracteres hors BMP
+ETATS = ("RESTITUEE_EN_SYNTHESE", "CONSERVEE_EN_DETAIL", "EN_ATTENTE_CONSERVEE")
+H_FEUILLES = ["SOURCE", "FICHIER_LOCAL", "FEUILLE", "STATUT", "MOTIF", "LIGNES_EXAMINEES",
+              "LIGNES_NON_VIDES", "LIGNES_CANDIDATES", "OBSERVATIONS_LECTEUR",
+              "LIGNES_CANDIDATES_SANS_OBSERVATION", "FORMULES_SANS_CACHE"]
+H_DONNEES = ["ID_LIGNE_IMPORT", "SOURCE", "FICHIER_LOCAL", "FEUILLE", "LIGNE", "NATURE",
+             "STATUT", "MOTIF", "PROMOTION", "DEGREE", "ID_DOSSIER_LOCAL", "ORDRE_PERIODE",
+             "DESTINATIONS", "CHAMPS_EN_CAUSE", "PARTIE_JSON", "NB_PARTIES_JSON", "CELLULES_SOURCE_JSON"]
+H_CHAMPS = ["SOURCE", "FEUILLE", "COLONNE_SOURCE", "LIBELLE_SOURCE", "TRAITEMENT",
+            "TYPE_ATTENDU", "DESTINATION_ET_CONTROLE", "VALEURS_NON_VIDES",
+            "FORMULES_SANS_CACHE", "OBSERVATIONS_AVEC_ALERTE"]
+
+
+def encoder(v):
+    if isinstance(v, (dt.datetime, dt.date, dt.time)):
+        return {"type": type(v).__name__, "valeur": v.isoformat()}
+    return str(v)
+
+
+def serie(v):
+    return json.dumps(v, ensure_ascii=False, default=encoder, separators=(",", ":"))
+
+
+def identifiant_ligne(source, feuille, ligne):
+    return "L_" + hashlib.sha256(serie([source, feuille, ligne]).encode()).hexdigest()[:24]
+
+
+def fige(v):
+    """Normalise seulement les types pour une comparaison technique, pas metier."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, float):
+        return round(v, 10)
+    if isinstance(v, (dt.datetime, dt.date)):
+        return v.isoformat()
+    return v
+
+
+def egal(a, b):
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) <= 0.005000001  # sorties de synthese arrondies a deux decimales
+    return fige(a) == fige(b)
+
+
+class ControleCouverture:
+    def __init__(self, regles):
+        self.r = regles
+        self.feuilles = []
+        self.donnees = []
+        self.champs = defaultdict(Counter)
+        self.libelles = {}
+        self.alertes = Counter()
+        self.volumes = defaultdict(Counter)
+        self.groupes = defaultdict(Counter)
+        self.champs_degree = Counter()
+        self.sources_absentes = []
+        self.empreintes = {}
+        self.bilan = {}
+
+    def probleme(self, rec, code):
+        if code not in rec["motifs"]:
+            rec["motifs"].append(code)
+            self.alertes[code] += 1
+
+    def promotion_agregee(self, valeur):
+        famille, code = self.r["promo"](valeur)
+        return code if famille in ("ICNA_LETTRE", "ICNA_P", "TSEEAC") else "NON_RECONNUE"
+
+    def contrat(self, src, niveau, label, colonne=None):
+        n = self.r["norm"](label)
+        if src == "REEF":
+            return "VALEUR_REEF_CONSERVEE"
+        if src == "PARCOURS":
+            if n in {"nom", "prenom", "promotion", "promo", "degre", "degree"}:
+                return "CONTEXTE_ET_NORMALISATION"
+            if niveau == "DETAIL_EVALUATION":
+                return "DETAIL_BRUT_DOCUMENTE_SANS_TENTATIVE_DEDUITE"
+            if n in {"note", "noteglobale", "resultat", "resultatglobal",
+                     "noteposition1", "noteposition2", "note1", "note2", "resultat1", "resultat2",
+                     "notereconstituee", "originenotereconstituee", "statutnotereconstituee"}:
+                return "SYNTHESE_OU_ROLE_A_CONTROLER"
+            if n in {"position1", "position2", "role1", "role2"}:
+                return "NORMALISATION_ROLE"
+            if n in {"eleveid", "idaurion"}:
+                return "IDENTIFIANT_CONSERVE_NON_UTILISE_COMME_CLE_UNIVERSELLE"
+            if n in {"promotionfichier", "degrefichier", "test1", "test2", "rattrapage1", "rattrapage2",
+                     "datefichier", "source", "feuillesource", "lignesource", "notereconstituee",
+                     "originenotereconstituee", "position2interpretee", "statutnotereconstituee",
+                     "traitementposition2"}:
+                return "BRUT_DOCUMENTE_SANS_NOUVELLE_REGLE"
+            return "CHAMP_NON_PREVU_CONSERVE_A_EXAMINER"
+        if src in ("NOTES", "SESSIONS"):
+            return "BLOC_SOURCE_CONSERVE_ET_CONTROLE"
+        if src == "ASTRAL":
+            return "BRUT_ASTRAL_CONSERVE_SANS_PREUVE_AUTOMATIQUE_DE_ZERO"
+        if src == "KLIF":
+            if colonne == "A" or n == "matricule":
+                return "CHAMP_KLIF_IDENTIFIANT_IGNORE"
+            if n == "origine":
+                return "CHAMP_KLIF_ORIGINE_SOURCE_CONTROLE"
+            if n == "nombredemoisdequalificationenacexclus":
+                return "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE"
+            if n in {"promo", "datedentreealenac", "nomdustagiaire", "prenomdustagiaire",
+                     "affectation", "zone", "datedaffectation", "dateobtentiondelamuzz",
+                     "arretformation", "nouveaucentre", "datedarrivee", "nombredechecs",
+                     "datedefindeformation", "modederecrutement", "nombredemoisdequalificationenacinclus",
+                     "nombredemoisdequalification", "nombredechecs", "prolongations",
+                     "nombredeprolongations", "dureedeprolongation"}:
+                return "CHAMP_KLIF_LU_OU_CONSERVE_BRUT"
+            return "CHAMP_KLIF_NON_PREVU_CONSERVE_A_EXAMINER"
+        return "BRUT_CONSERVE_A_EXAMINER"
+
+    def description_champ(self, src, label, traitement):
+        n = self.r["norm"](label)
+        if "note" in n:
+            typ = "NOMBRE_OU_VALEUR_NON_INTERPRETEE"
+        elif "date" in n:
+            typ = "DATE_SOURCE_OU_VALEUR_NON_INTERPRETEE"
+        elif "resultat" in n:
+            typ = "GO_NOGO_OU_TEXTE_SOURCE_SANS_DEDUCTION"
+        elif src == "ASTRAL" and self.r["degree_entete_astral"](str(label)):
+            typ = "REMEDIAL_EXPLICITE_OU_POURCENTAGE_OU_ABSENCE_DISTINCTS"
+        elif traitement == "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE":
+            typ = "NOMBRE_DE_MOIS_SOURCE_SANS_SUBSTITUTION"
+        else:
+            typ = "TYPE_SOURCE_CONSERVE"
+        if traitement == "VALEUR_REEF_CONSERVEE":
+            dest = "PARCOURS_CONSOLIDES : meme colonne ; comparaison independante + relecture."
+        elif traitement in ("SYNTHESE_OU_ROLE_A_CONTROLER", "BLOC_SOURCE_CONSERVE_ET_CONTROLE"):
+            dest = "Champs Degree PARCOURS/SOCRATES/SESSIONS + PROVENANCE ; brut dans COUVERTURE_DONNEES."
+        elif traitement == "DETAIL_BRUT_DOCUMENTE_SANS_TENTATIVE_DEDUITE":
+            dest = "PROVENANCE detail + COUVERTURE_DONNEES ; pas de resultat global derive."
+        elif src == "ASTRAL":
+            dest = "Brut dans COUVERTURE_DONNEES ; compteurs remedials controles, zeros derives non probants."
+        elif traitement == "CHAMP_KLIF_ORIGINE_SOURCE_CONTROLE":
+            dest = "KLIF_ORIGINE : valeur source non codee ; provenance et brute conservees."
+        elif traitement == "CHAMP_KLIF_DUREE_ENAC_EXCLUS_SOURCE_CONTROLE":
+            dest = "KLIF_MOIS_QUALIFICATION_ENAC_EXCLUS : valeur source distincte des durees recalculees."
+        elif traitement == "CHAMP_KLIF_IDENTIFIANT_IGNORE":

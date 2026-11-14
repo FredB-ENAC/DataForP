@@ -1,0 +1,150 @@
+            dest = "Identifiant administratif non exploite pour rapprocher les personnes ; brut conserve."
+        elif src == "KLIF":
+            dest = "Brut dans COUVERTURE_DONNEES ; champs KLIF retenus controles sur derniere periode."
+        else:
+            dest = "COUVERTURE_DONNEES : conservation brute verifiee ; aucune nouvelle interpretation."
+        return typ, dest
+
+    def inventorier(self, src, path):
+        """Double lecture valeurs/formules, independante des listes des lecteurs."""
+        from openpyxl import load_workbook
+        from openpyxl.utils import get_column_letter
+        path = Path(path)
+        self.empreintes[src] = self.r["sha"](path)
+        valeurs = load_workbook(path, read_only=True, data_only=True)
+        formules = load_workbook(path, read_only=True, data_only=False)
+        try:
+            for ws in valeurs:
+                fws = formules[ws.title]
+                lignes = []
+                caches = 0
+                no = 0
+                for no, pair in enumerate(zip_longest(ws.iter_rows(values_only=True),
+                                                     fws.iter_rows(values_only=False), fillvalue=()), 1):
+                    row, cells = pair
+                    brut, formulas = {}, {}
+                    for j, (v, cell) in enumerate(zip_longest(row, cells, fillvalue=None), 1):
+                        coord = get_column_letter(j)
+                        if v is not None:
+                            brut[coord] = v
+                        if cell is not None and cell.data_type == "f":
+                            formulas[coord] = cell.value
+                            if v is None:
+                                caches += 1
+                    if brut or formulas:
+                        lignes.append({"ligne": no, "values": brut, "formules": formulas})
+                info = {"source": src, "fichier": path.name, "feuille": ws.title,
+                        "statut": "NON_RECONNUE_A_EXAMINER", "motif": "",
+                        "lignes_examinees": max(ws.max_row or 0, no),
+                        "non_vides": len(lignes), "candidates": 0, "lues": 0, "manquantes": 0,
+                        "sans_cache": caches}
+                self.classer(src, info, lignes)
+                self.feuilles.append(info)
+                if info["statut"] == "NON_RECONNUE_A_EXAMINER":
+                    self.alertes["FEUILLE_NON_RECONNUE"] += 1
+                if caches:
+                    self.alertes["FORMULE_SANS_CACHE"] += caches
+                for rec in lignes:
+                    rec.update(source=src, fichier=path.name, feuille=ws.title, info=info,
+                               motifs=[], destinations=[], did="", ordre="", statut="CONSERVEE_EN_DETAIL")
+                    rec.setdefault("nature", "STRUCTURE_OU_TECHNIQUE")
+                    rec.setdefault("niveau", "")
+                    rec.setdefault("promo", "")
+                    rec.setdefault("degree", "")
+                    self.donnees.append(rec)
+            if self.r["sha"](path) != self.empreintes[src]:
+                raise ValueError("Une source a change pendant l'inventaire de couverture.")
+        finally:
+            valeurs.close()
+            formules.close()
+
+    def classer(self, src, info, rows):
+        norm = self.r["norm"]
+        if not rows:
+            info.update(statut="VIDE_OU_ENTETES_SEULS", motif="Aucune cellule utile.")
+            return
+        if info["feuille"].upper() in self.r.get("FEUILLES_IGNOREES", {}).get(src, ()):
+            info.update(statut="EXCLUE_PAR_REGLE", motif="Feuille auxiliaire ignoree par decision C1.")
+            for rec in rows:
+                rec.update(nature="EXCLUE_PAR_REGLE", exclusion="FEUILLE_AUXILIAIRE_C1")
+            return
+        headers, entete, niveau = {}, None, ""
+        if src in ("REEF", "PARCOURS"):
+            for rec in rows[:15]:
+                h = {k: norm(v) for k, v in rec["values"].items() if isinstance(v, str)}
+                req = {"nom", "prenom", "promotion"}
+                if req <= set(h.values()):
+                    headers, entete = rec["values"], rec["ligne"]
+                    break
+            if entete is not None:
+                nh = {norm(v) for v in headers.values()}
+                niveau = ("DETAIL_EVALUATION" if {"simulation", "role"} <= nh or
+                          norm(info["feuille"]) == "detailseval" else
+                          "SYNTHESE_PARCOURS")
+                info.update(statut="LUE_DETAIL" if niveau == "DETAIL_EVALUATION" else "LUE_SYNTHESE",
+                            motif="Structure inventoriee independamment du lecteur.")
+            else:
+                labels = {norm(v) for rec in rows[:8] for v in rec["values"].values()}
+                techniques = {"fichiers", "alertes", "metadonneesagregation"}
+                if src == "PARCOURS" and (norm(info["feuille"]) in techniques or
+                                         {"etiquettesdelignes", "etiquettesdecolonnes"} <= labels):
+                    info.update(statut="TECHNIQUE_NON_OBSERVATIONNELLE",
+                                motif="Inventaire, metadonnees, alertes ou tableau croise ; donnees brutes conservees.")
+        elif src in ("NOTES", "SESSIONS"):
+            bloc = None
+            hors_cible = False
+            exclusions = 0
+            bloc_refs, dg_bloc = [], ""
+            for rec in rows:
+                b = str(rec["values"].get("B", "")).strip()
+                if b.lower().startswith("class:"):
+                    hors_cible = self.r["famille_explicitement_exclue"](b[6:].strip())
+                    if hors_cible:
+                        bloc = None
+                        exclusions += 1
+                        rec.update(nature="EXCLUE_PAR_REGLE", exclusion="POPULATION_HORS_CIBLE_C2",
+                                   promo=self.r["promo"](b[6:].strip())[1] or "")
+                        continue
+                    bloc = rec["ligne"]
+                    rec.update(nature="CANDIDATE", porteur=bloc, niveau="BLOC_" + src,
+                               promo=self.r["promo"](b[6:].strip())[1] or "")
+                    bloc_refs, dg_bloc = [rec], ""
+                    info["candidates"] += 1
+                elif hors_cible:
+                    rec.update(nature="EXCLUE_PAR_REGLE", exclusion="POPULATION_HORS_CIBLE_C2")
+                elif bloc is not None:
+                    rec["porteur"] = bloc
+                    rec["degree"] = dg_bloc
+                    bloc_refs.append(rec)
+                    if b.lower().startswith("degree:"):
+                        dg_bloc = self.r["degree_de"](b[7:].strip()) or ""
+                        for prev in bloc_refs:
+                            prev["degree"] = dg_bloc
+                # Les lignes de bloc non prises en charge restent archivees.
+            if info["candidates"]:
+                info.update(statut="LUE_SYNTHESE", motif="Blocs Class: inventoriees independamment.")
+                headers = {"A": "Identite", "B": "Contexte bloc", "C": "Statut ou information source",
+                           "D": "Nombre ou date source", "E": "Role ou information source",
+                           "F": "Role ou resultat source", "G": "Note globale source"}
+            else:
+                if exclusions:
+                    info.update(statut="EXCLUE_PAR_REGLE", motif="Blocs hors cible explicitement exclus C2.")
+                else:
+                    info["motif"] = "Aucun bloc Class: ; contenu brut conserve pour examen."
+        elif src == "ASTRAL":
+            for rec in rows[:15]:
+                h = {k: self.r["degree_entete_astral"](str(v)) for k, v in rec["values"].items()}
+                if any(h.values()):
+                    headers, entete = rec["values"], rec["ligne"]
+                    info.update(statut="LUE_SYNTHESE", motif="En-tete Degree ASTRAL exact ; ABES_ ignore.")
+                    break
+            if entete is not None:
+                courant = None
+                suite = []
+                explicite = False
+
+                def terminer_bloc():
+                    nonlocal courant, suite, explicite
+                    if courant is not None:
+                        if explicite:
+                            courant.update(nature="CANDIDATE", niveau="SYNTHESE_ASTRAL",
