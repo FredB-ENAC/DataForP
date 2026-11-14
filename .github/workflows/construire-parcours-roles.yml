@@ -1,0 +1,117 @@
+name: Construire Parcours tous roles
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/construire-parcours-roles.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 50e5fba8122a3a9ed7ec89fb82a9f5986df6f0ff
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python -m pip install -r requirements.txt
+      - name: Assembler verifier corriger et tester
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast, hashlib, json, subprocess, sys, zipfile, difflib
+          from pathlib import Path
+          base=Path.cwd(); out=base/'construction_roles'; out.mkdir()
+          app=out/'application'; app.mkdir()
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          def exact(b,h):
+              if sha(b)==h:return b
+              b=b.replace(b'\r\n',b'\n')
+              assert sha(b)==h,'Empreinte non conforme'
+              return b
+          m=json.loads((base/'MANIFESTE.json').read_text(encoding='utf-8-sig'))
+          assert m['revision']=='2026-11-13-lot-c1-c8-r1-provenance'
+          for n,h in m['sha256'].items():
+              assert Path(n).name==n
+              (app/n).write_bytes(exact((base/n).read_bytes(),h))
+          verification={}
+          for n in ('consolidation.py','couverture.py'):
+              folder=base/(n+'_decoupe')
+              parts=json.loads((folder/'MANIFESTE_DECOUPAGE.json').read_text(encoding='utf-8-sig'))
+              assert parts['fichier_original']==n
+              blocks=[]; line=1
+              for p in parts['parties']:
+                  assert Path(p['fichier']).name==p['fichier']
+                  assert p['premiere_ligne']==line
+                  line=p['derniere_ligne']+1
+                  b=exact((folder/p['fichier']).read_bytes(),p['sha256'])
+                  assert len(b)==p['octets']
+                  blocks.append(b)
+              b=b''.join(blocks)
+              assert line-1==parts['nombre_lignes'] and len(b)==parts['octets_original']
+              assert sha(b)==parts['sha256_original']==m['sha256'][n]
+              assert b==(app/n).read_bytes()
+              (app/n).write_bytes(b)
+              verification[n]={'morceaux':len(blocks),'sha256':sha(b),'identique':True}
+          logs=[]
+          def run(args):
+              r=subprocess.run([sys.executable]+args,cwd=app,text=True,capture_output=True)
+              logs.append(' '.join(args)+'\n'+r.stdout+r.stderr)
+              (out/'JOURNAL.txt').write_text('\n\n'.join(logs),encoding='utf-8')
+              assert r.returncode==0,'Echec des tests : '+' '.join(args)
+          run(['consolidation.py','--autotest'])
+          originals={n:(app/n).read_text(encoding='utf-8') for n in ('consolidation.py','couverture.py')}
+          s=originals['consolidation.py']
+          def replace(a,b):
+              global s
+              assert s.count(a)==1,'Point de modification absent ou non unique'
+              s=s.replace(a,b,1)
+          replace('REVISION = "2026-11-13-lot-c1-c8-r1-provenance"','REVISION = "2026-11-14-parcours-tous-roles"')
+          replace('                        roles[r] = {"note": note(g("note" + i)), "res": resultat(g("res" + i)),\n                                    "ratt": propre(g("ratt" + i))}\n                        if r == "PL":\n                            roles[r]["res"] = resultat(g("res" + i)) or propre(g("res" + i)) or None','                        roles[r] = {"note": note(g("note" + i)),\n                                    "res": resultat(g("res" + i)) or propre(g("res" + i)) or None,\n                                    "ratt": resultat(g("ratt" + i)) or propre(g("ratt" + i)) or None}')
+          replace('    if d in ("APS1", "APS2"):\n        c += [d + "_PL_PARCOURS_RESULTAT"]','    for role in ROLES[d]:\n        c += ["%s_%s_PARCOURS_RESULTAT_INITIAL" % (d, role),\n              "%s_%s_PARCOURS_RESULTAT_CONFIRMATION" % (d, role)]')
+          replace('                    if d in ("APS1", "APS2"):\n                        champs.append((d + "_PL_PARCOURS_RESULTAT",\n                                       [x["data"]["roles"].get("PL", {}).get("res") for x in g]))','                    for role in ROLES[d]:\n                        for suffixe, cle in (("INITIAL", "res"), ("CONFIRMATION", "ratt")):\n                            champs.append(("%s_%s_PARCOURS_RESULTAT_%s" % (d, role, suffixe),\n                                           [x["data"]["roles"].get(role, {}).get(cle) or None for x in g]))')
+          ast.parse(s); (app/'consolidation.py').write_text(s,encoding='utf-8',newline='\n')
+          s=originals['couverture.py']
+          replace('                if role == "PL" and res is not None and res != "":\n                    attendus.append((dg + "_PL_PARCOURS_RESULTAT",\n                                     self.r["resultat"](res) or str(res).strip()))','                if role:\n                    for suffixe, valeur in (("INITIAL", res), ("CONFIRMATION", raw.get("rattrapage" + i))):\n                        if valeur is not None and str(valeur).strip():\n                            attendus.append(("%s_%s_PARCOURS_RESULTAT_%s" % (dg, role, suffixe),\n                                             self.r["resultat"](valeur) or str(valeur).strip()))')
+          ast.parse(s); (app/'couverture.py').write_text(s,encoding='utf-8',newline='\n')
+          for p in app.glob('test_*.py'):
+              t=p.read_text(encoding='utf-8-sig'); u=t.replace('_PL_PARCOURS_RESULTAT','_PL_PARCOURS_RESULTAT_INITIAL')
+              if t!=u:p.write_text(u,encoding='utf-8',newline='\n')
+          run(['consolidation.py','--autotest'])
+          test="import tempfile, hashlib\nfrom pathlib import Path\nfrom openpyxl import load_workbook\nimport consolidation as C\nimport test_consolidation as T\nwith tempfile.TemporaryDirectory() as d:\n    d=Path(d); r=d/'reef.xlsx'; p=d/'parcours.xlsx'; o=d/'sortie'\n    T.reef(r); T.parcours(p)\n    w=load_workbook(p); ws=w['Parcours']; h=[c.value for c in ws[1]]; ws.delete_rows(2,ws.max_row)\n    for dg in C.DEGREES:\n        row={'Nom':'MARTIN','Prénom':'Paul','Promotion':'20C','Degré':dg,'Note':10.65,'Résultat':'GO'}\n        for j,role in enumerate(reversed(C.ROLES[dg]),1):\n            row.update({'Position '+str(j):role,'Note Position '+str(j):10.36,'Resultat '+str(j):'NOGO','Rattrapage '+str(j):'GO'})\n        ws.append([row.get(c) for c in h])\n    w.save(p); w.close(); before=(r.read_bytes(),p.read_bytes())\n    C.consolider(r,{'PARCOURS':p},o,journal=lambda *a:None)\n    w=load_workbook(next(o.glob('PARCOURS_CONSOLIDES_*.xlsx')),read_only=True,data_only=True)\n    it=w['PARCOURS_CONSOLIDES'].iter_rows(values_only=True); h=next(it); rows=[dict(zip(h,x)) for x in it]\n    row=next(x for x in rows if x['ID_DOSSIER_LOCAL']=='D1' and x['ORDRE_PERIODE']==2)\n    it=w['PROVENANCE'].iter_rows(values_only=True); next(it); traces=list(it)\n    for dg in C.DEGREES:\n        assert row[dg+'_PARCOURS_NOTE']==10.65 and row[dg+'_PARCOURS_RESULTAT']=='GO'\n        assert dg+'_PL_PARCOURS_RESULTAT' not in h\n        for role in C.ROLES[dg]:\n            for suffix,val in [('INITIAL','NOGO'),('CONFIRMATION','GO')]:\n                col=f'{dg}_{role}_PARCOURS_RESULTAT_{suffix}'\n                assert row[col]==val,(col,row[col])\n                assert any(t[0]=='D1' and t[1]==2 and t[2]==col and t[3]==val and t[4]=='PARCOURS' for t in traces),col\n    w.close(); assert before==(r.read_bytes(),p.read_bytes())\nprint('Restitution et provenance des 7 Degrees et de tous les roles : OK')\n"
+          (app/'test_restitution_roles.py').write_text(test,encoding='utf-8')
+          run(['test_restitution_roles.py'])
+          for n in ('LANCER_WINDOWS.bat','requirements.txt'):assert sha((app/n).read_bytes())==m['sha256'][n]
+          note='Restitution Parcours tous roles : resultats initiaux et confirmations distincts. Anciennes colonnes PL_PARCOURS_RESULTAT remplacees par PL_PARCOURS_RESULTAT_INITIAL. Notes conservees, aucun resultat final par role invente. REEF et sources en lecture seule. Tests historiques renommes uniquement pour les deux colonnes remplacees. Voir le journal pour les tests executes. Windows et sources reelles non testes. Extraire dans un nouveau dossier, lancer LANCER_WINDOWS.bat et conserver le meme dossier de resultats pour les decisions et le registre. Les reperes de colonnes Excel peuvent changer.\n'
+          (app/'NOTE_MISE_A_JOUR_ROLES.txt').write_text(note,encoding='utf-8')
+          with (app/'LIRE_MOI.txt').open('a',encoding='utf-8') as f:f.write('\n\n'+note)
+          diff=''.join(''.join(difflib.unified_diff(t.splitlines(True),(app/n).read_text(encoding='utf-8').splitlines(True),fromfile='R1/'+n,tofile='roles/'+n)) for n,t in originals.items())
+          (app/'MODIFICATIONS_ROLES.diff').write_text(diff,encoding='utf-8')
+          (app/'MANIFESTE_R1_ORIGINAL.json').write_text(json.dumps(m,indent=2),encoding='utf-8')
+          (app/'RESULTATS_TESTS.txt').write_text('\n\n'.join(logs),encoding='utf-8')
+          b={'revision':'2026-11-14-parcours-tous-roles','assemblages':verification,'commandes_tests_reussies':3,'windows_teste':False,'sources_reelles_testees':False}
+          (app/'BILAN_TESTS.json').write_text(json.dumps(b,indent=2),encoding='utf-8')
+          m={'revision':b['revision'],'base_revision':m['revision'],'sha256':{p.name:sha(p.read_bytes()) for p in app.iterdir() if p.is_file() and p.name!='MANIFESTE.json'}}
+          (app/'MANIFESTE.json').write_text(json.dumps(m,indent=2),encoding='utf-8')
+          archive=out/'Parcours_consolides_tous_roles.zip'
+          with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(app.iterdir()):
+                  if p.is_file():z.write(p,'Parcours_consolides/'+p.name)
+          with zipfile.ZipFile(archive) as z:assert z.testzip() is None
+          print(json.dumps(b,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Parcours-consolides-tous-roles
+          path: construction_roles/Parcours_consolides_tous_roles.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Journal-construction-parcours-roles
+          path: construction_roles/JOURNAL.txt
+          if-no-files-found: warn
